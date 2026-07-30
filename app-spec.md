@@ -12,6 +12,8 @@ The app displays a full-screen live camera preview and takes a photograph when t
 
 All three inputs must invoke the same central capture operation. Do not implement three separate camera-capture paths.
 
+Each of these actions requests either a single photograph or a burst of four, depending on the currently active capture mode (see "Capture Mode").
+
 Use a temporary application name such as `Capture` and package name `com.example.capture`. Keep names easy to change later.
 
 ## Technology requirements
@@ -60,7 +62,7 @@ When the app starts:
 6. Capture a picture when either volume-up or volume-down is pressed.
 7. Capture a picture when a supported spoken command is recognized.
 8. Display brief visual feedback when capture begins and when the picture is saved.
-9. Trigger a brief haptic vibration when a picture is saved successfully, with a user-configurable duration (see "Settings"), so the user can tell a capture succeeded without having to look at the screen.
+9. Trigger a brief haptic vibration with a user-configurable duration (see "Settings"), so the user can tell a capture request was handled without having to look at the screen: in Single-Shot Mode this fires when the picture is saved successfully; in Burst Mode this fires once when the burst is triggered, not per image and not tied to save success (see "Burst Feedback").
 10. Prevent accidental duplicate captures caused by the same trigger or rapid repeated triggers.
 11. Remain responsive while the image is being saved.
 
@@ -179,7 +181,7 @@ The initial camera screen should include:
 * Small capture-status indicator (hidden while Overlay View is shown - see "Overlay image visibility")
 * Voice-listening indicator
 * Voice-trigger enable/disable control
-* Permission and error messages
+* Permission and permission-related error messages (capture and file-saving errors are not shown on this screen - see "Error Handling")
 * Optional visible shutter button for accessibility, even though touching the preview also captures (also hidden while Overlay View is shown)
 * Content descriptions and usable semantics for interactive controls
 * A swipeable overlay image that slides over the camera preview and back off-screen in response to horizontal swipe gestures (see "Overlay image visibility")
@@ -212,8 +214,8 @@ triggers (touch, volume buttons, voice command) must keep working exactly as bef
 overlay image is shown in place of the preview, so this doubles as a discreet/privacy display
 mode, not merely a cosmetic one.
 
-While Overlay View is shown, the capture-status indicator (the "Capturing…" / "Photo saved" /
-error control) and the visible shutter button must both be hidden - conceptually they sit
+While Overlay View is shown, the capture-status indicator (the "Capturing…" / "Photo saved"
+control) and the visible shutter button must both be hidden - conceptually they sit
 underneath the overlay image, so the image fully covers them, not just the camera preview. Capture
 must still work by tapping anywhere on the overlay image even though the shutter button isn't
 visible. Switching back to Camera Preview must make both controls visible again.
@@ -226,6 +228,104 @@ not just configuration change), even though it is not exposed as one.
 Overlay visibility is controlled exclusively through the swipe gestures described above. No
 user-facing setting or configuration option - on the settings screen or anywhere else - shall
 exist to enable or disable the overlay.
+
+## Capture Mode
+
+The application supports two capture modes:
+
+* **Single-Shot Mode** - each capture command (touch, volume button, or voice command) requests
+  one image, matching the behavior described in "Application purpose" and "Initial application
+  behavior" above.
+* **Burst Mode** - each capture command requests four images in quick succession (see "Burst Mode"
+  below).
+
+The active capture mode is selected from the Settings page (see "Settings") rather than the camera
+screen itself. The selected mode is persisted and restored automatically when the application
+restarts, the same way the other settings are.
+
+## Burst Mode
+
+When Burst Mode is active, a single capture command - the same touch, volume-button press, or
+voice command that would take one photo in Single-Shot Mode - initiates a sequence of four
+image-capture requests spaced by a configurable target interval, rather than a separate capture
+path. All four requests still flow through the one central capture operation described in "Capture
+coordination"; Burst Mode issues that same operation four times in sequence instead of once.
+
+The target interval between capture requests is configured on the Settings page using a slider
+with discrete snap points every 250 ms. The permitted range is 250 ms (minimum) to 2 seconds
+(maximum):
+
+* 250 ms
+* 500 ms
+* 750 ms
+* 1.0 s
+* 1.25 s
+* 1.5 s
+* 1.75 s
+* 2.0 s
+
+The default burst interval is 500 ms - fast enough to feel like a genuine burst, while being more
+likely to work consistently across a wide range of Android device camera hardware than the 250 ms
+minimum would.
+
+The selected interval is persisted and restored automatically when the application restarts, the
+same way the other settings are.
+
+The configured interval is a target, not a guarantee: actual time between captures may vary by
+device due to camera hardware, exposure time, image processing, and operating-system scheduling.
+Do not assume exact timing, and do not treat a slower-than-configured burst as an error on its own.
+
+A second burst must not begin while a burst is already in progress. This is an extension of the
+existing "reject or debounce duplicate rapid requests" responsibility described in "Capture
+coordination," not a separate mechanism - a capture command received mid-burst is simply ignored
+rather than starting an overlapping burst.
+
+## Capture Performance
+
+Burst Mode is intended to prioritize responsiveness over maximum image quality. During Burst Mode, the implementation should favor the lowest practical capture latency that still produces normal full-resolution photographs.
+
+Single-Shot Mode should use the implementation's default capture behavior unless there is a demonstrated benefit to using a higher-quality capture mode.
+
+## Burst Feedback
+
+When a burst is successfully triggered, the device vibrates once, using the same configured
+vibration duration as Single-Shot Mode's capture-success pulse (see "Settings").
+
+This single vibration indicates only that the application accepted and started the burst request -
+it does not indicate that all four images were successfully captured or saved. The application must
+not vibrate separately for each image in the burst.
+
+## Flash and Torch Restrictions
+
+The camera flash and torch must not be used:
+
+* While Burst Mode is active, or
+* While an overlay image is visible (see "Overlay image visibility").
+
+Whenever either condition applies, the application must ensure the flash and torch are disabled
+regardless of whatever state they were previously in - actively turn them off if they were already
+on, rather than merely skipping turning them on.
+
+## Error Handling
+
+Capture and file-saving errors must not be displayed on the main camera screen.
+
+Instead, log errors to an application log file, in either JSON or plain-text format. Each logged
+error should include, when available:
+
+* Date and time
+* Active capture mode (Single-Shot or Burst)
+* Burst image number (1-4), when applicable
+* Configured burst interval, when applicable
+* Output filename or destination
+* Error type
+* Error message
+* Relevant exception details
+
+An error affecting one image in a burst must not automatically cancel the remaining capture
+requests in that burst, unless continuing is not technically possible (for example, the camera
+session itself has failed). A burst may therefore complete with fewer than four successfully saved
+images without displaying an on-screen error.
 
 ## Settings
 
@@ -248,9 +348,13 @@ The settings screen lets the user configure:
    app-private storage at selection time (while the picker's grant is still valid) and persist a
    reference to that private copy instead, so the durability of the setting does not depend on the
    picker's grant lifetime at all.
+3. **Capture mode** - a control (for example, a two-option segmented button) for choosing between
+   Single-Shot Mode and Burst Mode (see "Capture Mode").
+4. **Burst interval** - a slider with discrete snap points every 250 ms from 250 ms to 2 seconds,
+   defaulting to 500 ms (see "Burst Mode").
 
-Persist both settings, and the overlay-visibility state described above, across app restarts (e.g.
-with Jetpack DataStore). Keep the settings screen testable the same way as the camera screen:
+Persist all four settings, and the overlay-visibility state described above, across app restarts
+(e.g. with Jetpack DataStore). Keep the settings screen testable the same way as the camera screen:
 stateless composables driven by state and callbacks, with the actual persistence mechanism behind
 an interface.
 
@@ -282,10 +386,16 @@ Write unit tests for:
 * Trigger-source recording
 * ViewModel behavior
 * Permission-state decision logic
-* Settings persistence (defaults, reading back a saved value, and updates to each of the two settings)
+* Settings persistence (defaults, reading back a saved value, and updates to each of the four settings)
 * Overlay-visibility persistence (defaults, reading back a saved value, and that it correctly reflects the last swipe-driven state) even though it is not presented on the settings screen
 * A setting or overlay-visibility write is durably persisted even if the owning ViewModel is cleared immediately after the write is triggered (not just that the in-memory/observed state updates) - this is the specific failure mode a screen-scoped ViewModel's coroutine scope being cancelled by navigation would otherwise hide
 * Selecting an overlay image copies it into app-private storage (and persists a reference to that copy) rather than persisting the picker's own returned Uri directly - test this by asserting what gets persisted is not simply the source Uri unchanged, and that a failed copy leaves the previous selection in place instead of persisting an unreadable reference
+* Burst Mode issues exactly four capture requests per capture command, spaced by the configured interval, through the same central capture operation used by Single-Shot Mode
+* A capture command received while a burst is already in progress does not start a second, overlapping burst
+* A successfully triggered burst vibrates exactly once, regardless of how many of the four images ultimately succeed or fail, and Single-Shot Mode's own vibration behavior is unaffected
+* An error on one image within a burst does not cancel the remaining requests in that burst unless continuing is technically impossible, and the burst's capture result reflects fewer than four successes without raising an on-screen error
+* Logged error entries include the documented fields (date/time, active capture mode, burst image number and configured interval when applicable, output filename/destination, error type, error message, exception details) when available
+* Flash/torch requests are suppressed (and any already-on flash/torch is turned off) while Burst Mode is active and while the overlay image is visible
 
 Use fakes rather than mocks when practical.
 
@@ -301,11 +411,11 @@ Write Compose tests verifying:
 * Pressing the visible shutter control dispatches a capture trigger
 * Voice-listening state is visibly represented
 * Capture-in-progress state is represented
-* An error is presented accessibly
+* A capture or file-saving error does not display any error text or detail on the main camera screen (see "Error Handling")
 * A left swipe on the camera preview shows the overlay image (Overlay View), and a right swipe on the overlay image hides it again (Camera Preview)
 * The restored overlay-visibility state (from the last time the app was closed) is reflected correctly on launch
 * No settings-screen control exists for enabling or disabling the overlay
-* The settings screen reflects and updates each of the two stored settings
+* The settings screen reflects and updates each of the four stored settings, including the capture-mode selector and the burst-interval slider
 
 The composables must accept state and callbacks so they can be tested without starting a real camera.
 
@@ -372,7 +482,7 @@ Create a useful `README.md` containing:
 * How to run each test category
 * How to change the voice-command vocabulary
 * How to replace `SpeechRecognizer`
-* Manual test checklist for touch, voice, volume buttons, rotation, permissions, image storage, and overlay swipe gestures (smooth gesture-following animation is hard to unit test)
+* Manual test checklist for touch, voice, volume buttons, rotation, permissions, image storage, overlay swipe gestures (smooth gesture-following animation is hard to unit test), and Burst Mode (actual device timing between captures, flash/torch staying off, and the single burst-triggered vibration)
 * Known device-manufacturer differences involving volume keys, camera behavior, and speech recognition
 
 Include a Mermaid component or flow diagram showing:
