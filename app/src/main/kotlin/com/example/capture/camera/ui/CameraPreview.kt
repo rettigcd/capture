@@ -1,6 +1,7 @@
 package com.example.capture.camera.ui
 
 import androidx.camera.compose.CameraXViewfinder
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.Preview
@@ -17,6 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.capture.camera.domain.CaptureMode
 
 /**
  * The only file in the app that touches CameraX's `Preview`/`ImageCapture` use cases directly.
@@ -26,12 +28,19 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
  * across orientation changes.
  *
  * [onImageCaptureReady] hands the bound `ImageCapture` use case to
- * [com.example.capture.camera.data.ImageCaptureUseCaseHolder] (via `CameraViewModel`) so
- * [com.example.capture.camera.domain.CaptureCoordinator] - which knows nothing about Compose or
- * `LifecycleOwner`s - can trigger captures on it.
+ * [com.example.capture.camera.data.ImageCaptureUseCaseHolder], and [onCameraReady] hands the bound
+ * `Camera` to [com.example.capture.camera.data.CameraControlHolder] (both via `CameraViewModel`),
+ * so [com.example.capture.camera.domain.CaptureCoordinator] and
+ * [com.example.capture.camera.domain.FlashTorchController] - which know nothing about Compose or
+ * `LifecycleOwner`s - can act on them.
  */
 @Composable
-fun CameraPreview(modifier: Modifier = Modifier, onImageCaptureReady: (ImageCapture?) -> Unit) {
+fun CameraPreview(
+    captureMode: CaptureMode,
+    modifier: Modifier = Modifier,
+    onImageCaptureReady: (ImageCapture?) -> Unit,
+    onCameraReady: (Camera?) -> Unit,
+) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -41,22 +50,34 @@ fun CameraPreview(modifier: Modifier = Modifier, onImageCaptureReady: (ImageCapt
             setSurfaceProvider { request -> surfaceRequest = request }
         }
     }
-    val imageCaptureUseCase = remember { ImageCapture.Builder().build() }
+    // Burst Mode explicitly asks for CameraX's lowest-latency capture pipeline (see "Capture
+    // Performance" in app-spec.md); Single-Shot Mode leaves CameraX's own default alone rather
+    // than assuming it already matches. A built ImageCapture's capture mode can't be changed
+    // afterward, so a capture-mode change rebuilds (and, below, rebinds) it instead.
+    val imageCaptureUseCase = remember(captureMode) {
+        ImageCapture.Builder()
+            .apply { if (captureMode == CaptureMode.BURST) setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY) }
+            .build()
+    }
 
-    LaunchedEffect(lifecycleOwner) {
+    LaunchedEffect(lifecycleOwner, captureMode) {
         val cameraProvider = ProcessCameraProvider.awaitInstance(context)
         cameraProvider.unbindAll()
-        cameraProvider.bindToLifecycle(
+        val camera = cameraProvider.bindToLifecycle(
             lifecycleOwner,
             CameraSelector.DEFAULT_BACK_CAMERA,
             previewUseCase,
             imageCaptureUseCase,
         )
         onImageCaptureReady(imageCaptureUseCase)
+        onCameraReady(camera)
     }
 
     DisposableEffect(Unit) {
-        onDispose { onImageCaptureReady(null) }
+        onDispose {
+            onImageCaptureReady(null)
+            onCameraReady(null)
+        }
     }
 
     surfaceRequest?.let { request ->

@@ -139,13 +139,15 @@ class CameraScreenTest {
     }
 
     @Test
-    fun captureFailure_isPresentedAccessibly() {
-        val message = "Couldn't save the photo. Please try again."
+    fun captureFailure_isNotShownOnScreen_andStatusFallsBackToIdle() {
+        // Capture and file-saving errors are logged, not shown on the main camera screen - see
+        // "Error Handling" in app-spec.md. CaptureStatusUi has no Failed variant at all, so a
+        // failure simply reads as Idle.
         setScreen(
-            CameraUiState(cameraPermission = PermissionStatus.GRANTED, captureStatus = CaptureStatusUi.Failed(message)),
+            CameraUiState(cameraPermission = PermissionStatus.GRANTED, captureStatus = CaptureStatusUi.Idle),
         )
 
-        composeTestRule.onNodeWithText(message).assertIsDisplayed()
+        composeTestRule.onNodeWithText(context.getString(R.string.capture_status_idle)).assertIsDisplayed()
     }
 
     @Test
@@ -190,7 +192,7 @@ class CameraScreenTest {
                 cameraPermission = PermissionStatus.GRANTED,
                 overlayVisible = true,
                 overlayImageUriString = "content://fake/overlay",
-                captureStatus = CaptureStatusUi.Saved("content://fake/photo"),
+                captureStatus = CaptureStatusUi.Saved,
             ),
         )
 

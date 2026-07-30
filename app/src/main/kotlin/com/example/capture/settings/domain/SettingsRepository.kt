@@ -1,5 +1,6 @@
 package com.example.capture.settings.domain
 
+import com.example.capture.camera.domain.CaptureMode
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -12,4 +13,6 @@ interface SettingsRepository {
 
     suspend fun setVibrationDurationMillis(durationMillis: Long)
     suspend fun setOverlayImageUri(uriString: String?)
+    suspend fun setCaptureMode(mode: CaptureMode)
+    suspend fun setBurstIntervalMillis(intervalMillis: Long)
 }

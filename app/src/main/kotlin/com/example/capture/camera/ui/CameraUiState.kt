@@ -1,5 +1,6 @@
 package com.example.capture.camera.ui
 
+import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.permissions.PermissionStatus
 
 /**
@@ -20,12 +21,17 @@ data class CameraUiState(
      */
     val overlayVisible: Boolean = false,
     val overlayImageUriString: String? = null,
+    val captureMode: CaptureMode = CaptureMode.SINGLE_SHOT,
 )
 
-/** UI-facing projection of [com.example.capture.camera.domain.CaptureState]. */
+/**
+ * UI-facing projection of [com.example.capture.camera.domain.CaptureState]. Deliberately carries
+ * no error detail: capture and file-saving errors are logged (see
+ * [com.example.capture.camera.domain.CaptureErrorLogger]), not shown on the main camera screen -
+ * see "Error Handling" in app-spec.md.
+ */
 sealed interface CaptureStatusUi {
     data object Idle : CaptureStatusUi
     data object Capturing : CaptureStatusUi
-    data class Saved(val uriString: String) : CaptureStatusUi
-    data class Failed(val message: String) : CaptureStatusUi
+    data object Saved : CaptureStatusUi
 }

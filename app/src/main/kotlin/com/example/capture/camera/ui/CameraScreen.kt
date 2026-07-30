@@ -264,20 +264,17 @@ private const val OVERLAY_ANIMATION_DURATION_MILLIS = 200
 
 @Composable
 private fun CaptureStatusIndicator(status: CaptureStatusUi, modifier: Modifier = Modifier) {
+    // No error branch here: capture and file-saving errors are logged, not shown on screen - see
+    // "Error Handling" in app-spec.md and CaptureStatusUi's kdoc. A failure simply falls back to
+    // the idle text below.
     val text = when (status) {
         CaptureStatusUi.Idle -> stringResource(R.string.capture_status_idle)
         CaptureStatusUi.Capturing -> stringResource(R.string.capture_status_capturing)
-        is CaptureStatusUi.Saved -> stringResource(R.string.capture_status_saved)
-        is CaptureStatusUi.Failed -> status.message
+        CaptureStatusUi.Saved -> stringResource(R.string.capture_status_saved)
     }
-    val isError = status is CaptureStatusUi.Failed
     Card(
-        modifier = modifier.semantics {
-            liveRegion = if (isError) LiveRegionMode.Assertive else LiveRegionMode.Polite
-        },
-        colors = CardDefaults.cardColors(
-            containerColor = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surface,
-        ),
+        modifier = modifier.semantics { liveRegion = LiveRegionMode.Polite },
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,

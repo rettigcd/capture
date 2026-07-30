@@ -30,9 +30,28 @@ data class CaptureResult(
     val timestampMillis: Long,
 )
 
+/**
+ * How many images a single capture command produces (see "Capture Mode" in app-spec.md).
+ * Orthogonal to [CaptureTrigger]: the same touch/volume/voice trigger sources apply to both modes.
+ */
+enum class CaptureMode { SINGLE_SHOT, BURST }
+
+/** Fixed number of images a Burst Mode capture command requests (see "Burst Mode" in app-spec.md). */
+const val BURST_IMAGE_COUNT = 4
+
 /** Coordinator-level state machine exposed to the UI layer. */
 sealed interface CaptureState {
     data object Idle : CaptureState
     data class Capturing(val trigger: CaptureTrigger) : CaptureState
     data class Completed(val result: CaptureResult) : CaptureState
+
+    /**
+     * Emitted once, immediately when a burst is accepted - before any of its images are actually
+     * captured - so the UI/haptics can react to "a burst was started" independent of whether any
+     * individual image in it eventually succeeds (see "Burst Feedback" in app-spec.md).
+     */
+    data class BurstStarted(val trigger: CaptureTrigger) : CaptureState
+
+    /** Emitted once all [BURST_IMAGE_COUNT] images have been attempted, in capture order. */
+    data class BurstCompleted(val results: List<CaptureResult>, val trigger: CaptureTrigger) : CaptureState
 }

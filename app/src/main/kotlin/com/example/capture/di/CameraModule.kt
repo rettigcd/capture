@@ -2,9 +2,13 @@ package com.example.capture.di
 
 import com.example.capture.camera.data.AndroidHapticFeedback
 import com.example.capture.camera.data.CameraXCaptureController
+import com.example.capture.camera.data.CameraXFlashTorchController
 import com.example.capture.camera.data.DataStoreOverlayVisibilityRepository
+import com.example.capture.camera.data.FileCaptureErrorLogger
 import com.example.capture.camera.data.MediaStorePhotoStorage
 import com.example.capture.camera.domain.CameraCaptureController
+import com.example.capture.camera.domain.CaptureErrorLogger
+import com.example.capture.camera.domain.FlashTorchController
 import com.example.capture.camera.domain.HapticFeedback
 import com.example.capture.camera.domain.OverlayVisibilityRepository
 import com.example.capture.camera.domain.PhotoStorage
@@ -30,4 +34,10 @@ abstract class CameraModule {
     abstract fun bindOverlayVisibilityRepository(
         impl: DataStoreOverlayVisibilityRepository,
     ): OverlayVisibilityRepository
+
+    @Binds
+    abstract fun bindCaptureErrorLogger(impl: FileCaptureErrorLogger): CaptureErrorLogger
+
+    @Binds
+    abstract fun bindFlashTorchController(impl: CameraXFlashTorchController): FlashTorchController
 }

@@ -1,5 +1,6 @@
 package com.example.capture.settings.ui
 
+import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.settings.domain.AppSettings
 import com.example.capture.testing.FakeOverlayImageStore
 import com.example.capture.testing.FakeSettingsRepository
@@ -138,6 +139,42 @@ class SettingsViewModelTest {
 
         assertThat(imageStore.persistedSourceUris).isEmpty()
         assertThat(vm.uiState.value.overlayImageUriString).isNull()
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `changing the capture mode updates state and is persisted`() = runTest {
+        val repository = FakeSettingsRepository()
+        val vm = buildViewModel(repository)
+        val collectJob = launch { vm.uiState.collect {} }
+
+        vm.onCaptureModeChanged(CaptureMode.BURST)
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.captureMode).isEqualTo(CaptureMode.BURST)
+        assertThat(repository.settings.value.captureMode).isEqualTo(CaptureMode.BURST)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `changing the burst interval updates state and is clamped to the valid range`() = runTest {
+        val repository = FakeSettingsRepository()
+        val vm = buildViewModel(repository)
+        val collectJob = launch { vm.uiState.collect {} }
+
+        vm.onBurstIntervalChanged(750L)
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.burstIntervalMillis).isEqualTo(750L)
+
+        vm.onBurstIntervalChanged(10_000L)
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.burstIntervalMillis).isEqualTo(AppSettings.BURST_INTERVAL_RANGE_MILLIS.last)
+
+        vm.onBurstIntervalChanged(0L)
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.burstIntervalMillis).isEqualTo(AppSettings.BURST_INTERVAL_RANGE_MILLIS.first)
 
         collectJob.cancel()
     }

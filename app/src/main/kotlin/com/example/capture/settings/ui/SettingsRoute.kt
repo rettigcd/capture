@@ -34,6 +34,8 @@ fun SettingsRoute(onBack: () -> Unit, modifier: Modifier = Modifier, viewModel: 
                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
             )
         },
+        onCaptureModeChanged = viewModel::onCaptureModeChanged,
+        onBurstIntervalChanged = viewModel::onBurstIntervalChanged,
         onBack = onBack,
         modifier = modifier,
     )

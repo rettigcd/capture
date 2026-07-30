@@ -8,8 +8,10 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
 import com.example.capture.R
+import com.example.capture.camera.domain.CaptureMode
 import com.google.common.truth.Truth.assertThat
 import org.junit.Rule
 import org.junit.Test
@@ -31,6 +33,8 @@ class SettingsScreenTest {
         uiState: SettingsUiState,
         onVibrationDurationChanged: (Long) -> Unit = {},
         onPickImageClick: () -> Unit = {},
+        onCaptureModeChanged: (CaptureMode) -> Unit = {},
+        onBurstIntervalChanged: (Long) -> Unit = {},
         onBack: () -> Unit = {},
     ) {
         composeTestRule.setContent {
@@ -38,6 +42,8 @@ class SettingsScreenTest {
                 uiState = uiState,
                 onVibrationDurationChanged = onVibrationDurationChanged,
                 onPickImageClick = onPickImageClick,
+                onCaptureModeChanged = onCaptureModeChanged,
+                onBurstIntervalChanged = onBurstIntervalChanged,
                 onBack = onBack,
             )
         }
@@ -78,6 +84,35 @@ class SettingsScreenTest {
         composeTestRule.onNodeWithText(context.getString(R.string.settings_choose_image_button)).performClick()
 
         assertThat(clickCount).isEqualTo(1)
+    }
+
+    @Test
+    fun captureModeSegmentedButton_reflectsTheCurrentSelection() {
+        setScreen(SettingsUiState(captureMode = CaptureMode.BURST))
+
+        composeTestRule.onNodeWithText(context.getString(R.string.settings_capture_mode_burst)).assertIsDisplayed()
+    }
+
+    @Test
+    fun selectingBurst_invokesCaptureModeChangedCallback() {
+        var selectedMode: CaptureMode? = null
+        setScreen(SettingsUiState(captureMode = CaptureMode.SINGLE_SHOT), onCaptureModeChanged = { selectedMode = it })
+
+        composeTestRule.onNodeWithText(context.getString(R.string.settings_capture_mode_burst))
+            .performScrollTo()
+            .performClick()
+
+        assertThat(selectedMode).isEqualTo(CaptureMode.BURST)
+    }
+
+    @Test
+    fun burstIntervalLabel_reflectsTheCurrentValue() {
+        setScreen(SettingsUiState(burstIntervalMillis = 750L))
+
+        composeTestRule
+            .onNodeWithText(context.getString(R.string.settings_burst_interval_label, 750L))
+            .performScrollTo()
+            .assertIsDisplayed()
     }
 
     @Test

@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.settings.domain.AppSettings
 import com.example.capture.settings.domain.SettingsRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -24,6 +25,8 @@ class DataStoreSettingsRepository @Inject constructor(
     private object Keys {
         val VIBRATION_DURATION_MILLIS = longPreferencesKey("vibration_duration_millis")
         val OVERLAY_IMAGE_URI = stringPreferencesKey("overlay_image_uri")
+        val CAPTURE_MODE = stringPreferencesKey("capture_mode")
+        val BURST_INTERVAL_MILLIS = longPreferencesKey("burst_interval_millis")
     }
 
     override val settings: Flow<AppSettings> = context.settingsDataStore.data.map { preferences ->
@@ -31,6 +34,9 @@ class DataStoreSettingsRepository @Inject constructor(
             vibrationDurationMillis = preferences[Keys.VIBRATION_DURATION_MILLIS]
                 ?: AppSettings.DEFAULT_VIBRATION_DURATION_MILLIS,
             overlayImageUriString = preferences[Keys.OVERLAY_IMAGE_URI],
+            captureMode = preferences[Keys.CAPTURE_MODE]?.toCaptureModeOrDefault() ?: CaptureMode.SINGLE_SHOT,
+            burstIntervalMillis = preferences[Keys.BURST_INTERVAL_MILLIS]
+                ?: AppSettings.DEFAULT_BURST_INTERVAL_MILLIS,
         )
     }
 
@@ -47,4 +53,17 @@ class DataStoreSettingsRepository @Inject constructor(
             }
         }
     }
+
+    override suspend fun setCaptureMode(mode: CaptureMode) {
+        context.settingsDataStore.edit { it[Keys.CAPTURE_MODE] = mode.name }
+    }
+
+    override suspend fun setBurstIntervalMillis(intervalMillis: Long) {
+        context.settingsDataStore.edit { it[Keys.BURST_INTERVAL_MILLIS] = intervalMillis }
+    }
+
+    // Falls back to the default rather than throwing if a future release ever removes/renames an
+    // enum constant and an old value is still on disk.
+    private fun String.toCaptureModeOrDefault(): CaptureMode =
+        CaptureMode.entries.firstOrNull { it.name == this } ?: CaptureMode.SINGLE_SHOT
 }

@@ -41,6 +41,8 @@ flowchart TD
         StorageIface[[PhotoStorage]]
         HapticIface[[HapticFeedback]]
         OverlayIface[[OverlayVisibilityRepository]]
+        ErrorLogIface[[CaptureErrorLogger]]
+        FlashIface[[FlashTorchController]]
     end
 
     subgraph CameraData["camera.data"]
@@ -49,6 +51,8 @@ flowchart TD
         Holder[ImageCaptureUseCaseHolder]
         HapticImpl[AndroidHapticFeedback]
         OverlayImpl[DataStoreOverlayVisibilityRepository]
+        ErrorLogImpl[FileCaptureErrorLogger]
+        FlashImpl[CameraXFlashTorchController]
     end
 
     subgraph Voice["voice"]
@@ -76,13 +80,18 @@ flowchart TD
     VM --> SettingsIface
     VM --> HapticIface
     VM --> OverlayIface
+    VM --> FlashIface
     Coordinator --> CamIface
     Coordinator --> StorageIface
+    Coordinator --> ErrorLogIface
     CamIface -.implemented by.-> CamX
     StorageIface -.implemented by.-> MediaStoreImpl
     HapticIface -.implemented by.-> HapticImpl
     OverlayIface -.implemented by.-> OverlayImpl
+    ErrorLogIface -.implemented by.-> ErrorLogImpl
+    FlashIface -.implemented by.-> FlashImpl
     OverlayImpl --> DataStore
+    FlashImpl --> Holder
     CamX --> Holder
     Preview --> Holder
     VM --> VoiceIface
@@ -116,13 +125,16 @@ com.example.capture
 ├── di/                           Hilt modules (AppModule, CameraModule, VoiceModule, SettingsModule)
 ├── permissions/                  CapturePermissions: pure permission-state decision logic
 ├── camera/
-│   ├── domain/                   CaptureTrigger, CaptureCoordinator, CaptureModels, the
-│   │                             CameraCaptureController / PhotoStorage / HapticFeedback /
-│   │                             OverlayVisibilityRepository interfaces
+│   ├── domain/                   CaptureTrigger, CaptureCoordinator, CaptureModels (incl.
+│   │                             CaptureMode, CaptureState.BurstStarted/BurstCompleted),
+│   │                             CaptureErrorLogger, the CameraCaptureController /
+│   │                             PhotoStorage / HapticFeedback / OverlayVisibilityRepository /
+│   │                             FlashTorchController interfaces
 │   ├── data/                     CameraXCaptureController, MediaStorePhotoStorage,
-│   │                             ImageCaptureUseCaseHolder, AndroidHapticFeedback,
-│   │                             DataStoreOverlayVisibilityRepository - the only
-│   │                             CameraX/MediaStore/Vibrator/overlay-DataStore code
+│   │                             ImageCaptureUseCaseHolder, CameraControlHolder,
+│   │                             AndroidHapticFeedback, DataStoreOverlayVisibilityRepository,
+│   │                             FileCaptureErrorLogger, CameraXFlashTorchController - the only
+│   │                             CameraX/MediaStore/Vibrator/DataStore/file-logging code
 │   └── ui/                       CameraViewModel, CameraUiState, CameraScreen (stateless,
 │                                 including the swipe-gesture overlay logic),
 │                                 CameraRoute (permissions + Hilt wiring), CameraPreview
@@ -201,21 +213,26 @@ No storage permission is requested (see "Why minSdk 29" above).
 
 ## Feedback on capture
 
-Every successful capture - regardless of whether it was triggered by touch, a volume button, or a
-voice command - gets both visual and haptic feedback:
+Every capture command - regardless of whether it was triggered by touch, a volume button, or a
+voice command - gets both visual and haptic feedback, though the two capture modes (see "Capture
+Mode and Burst Mode" below) trigger that feedback at different points:
 
-* The capture-status indicator shows "Photo saved" (`CameraScreen.kt`).
+* The capture-status indicator shows "Photo saved" (`CameraScreen.kt`) once a Single-Shot capture
+  succeeds, or once a Burst Mode capture command completes with at least one successfully saved
+  image (`CameraUiState.CaptureStatusUi` has no error state at all - see "Error Handling" below).
 * The device performs one haptic pulse (`camera/domain/HapticFeedback.kt`, implemented by
   `camera/data/AndroidHapticFeedback.kt` using `VibrationEffect.createOneShot(durationMillis, ...)`),
-  so a successful capture can be felt without having to look at the screen. Its duration is a
-  user setting (see "Settings" below) rather than a fixed value, which is why this uses
-  `createOneShot` instead of a predefined system effect (predefined effects have a fixed length
-  that can't be customized).
+  using a user-configurable duration (see "Settings" below) rather than a fixed value, which is why
+  this uses `createOneShot` instead of a predefined system effect (predefined effects have a fixed
+  length that can't be customized). In **Single-Shot Mode** this fires once the picture is saved
+  successfully; in **Burst Mode** it fires once, immediately when the burst is accepted
+  (`CaptureState.BurstStarted`), not once per image and not tied to whether any image is ultimately
+  saved - see "Burst Feedback" below.
 
 `CameraViewModel` triggers the pulse from a dedicated collector on `CaptureCoordinator.state` (see
 its `init` block) rather than as a derived property of `uiState`, specifically so it fires exactly
-once per completed capture instead of repeating for as long as the status happens to still read
-"saved." Only successful captures vibrate; a failed capture does not.
+once per completed Single-Shot capture (or once per triggered burst) instead of repeating for as
+long as the status happens to still read "saved." A failed Single-Shot capture does not vibrate.
 
 ## Overlay image visibility
 
@@ -273,14 +290,89 @@ asserts the settings screen has zero toggleable nodes). `CameraViewModel.onOverl
 writes on the injected `@ApplicationScope` `CoroutineScope`, for the same durability reasoning
 described below for settings writes.
 
+## Capture Mode and Burst Mode
+
+The camera screen supports two capture modes, chosen on the settings screen (see "Settings"
+below) and persisted the same way as the other settings:
+
+* **Single-Shot Mode** (default) - each capture command takes one photo, exactly as described
+  above.
+* **Burst Mode** - each capture command takes `BURST_IMAGE_COUNT` (4) photos in quick succession,
+  spaced by a configurable target interval.
+
+Both modes share the exact same `CaptureCoordinator.requestCapture` entry point and the same
+per-image capture/storage logic (`performCapture`); Burst Mode just calls it four times in a row
+with a `delay()` in between; instead of once. `CameraViewModel.requestCapture` reads the current
+`captureMode`/`burstIntervalMillis` off `SettingsRepository` at the moment each trigger fires and
+passes them through.
+
+**The burst interval is a target, not a guarantee.** It's configured with a `Slider` snapped to
+250 ms increments from 250 ms (minimum) to 2 s (maximum) (`AppSettings.BURST_INTERVAL_RANGE_MILLIS`),
+defaulting to 500 ms - fast enough to feel like a genuine burst, while more likely to work
+consistently across a wide range of Android device camera hardware than the 250 ms minimum. Actual
+elapsed time between captures can still vary with camera hardware, exposure time, image
+processing, and OS scheduling.
+
+**A second burst can't start while one is already running.** `CaptureCoordinator.requestCapture`
+uses `Mutex.tryLock()` rather than a blocking `lock()`, so a capture command that arrives while a
+capture (or an entire burst) is already in flight is dropped immediately instead of queuing to run
+afterward - this is what makes "no overlapping burst" work without a separate flag.
+`CaptureCoordinatorTest`'s `"a capture command received while a burst is in progress is dropped"`
+case launches an overlapping request mid-burst and asserts only the burst's own four images were
+captured.
+
+**One vibration per burst, not per image** - see "Burst Feedback" in "Feedback on capture" above.
+
+**Capture Performance.** `CameraPreview.kt` builds its `ImageCapture` use case with
+`setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)` only when Burst Mode is active;
+Single-Shot Mode leaves CameraX's own default alone. Since a built `ImageCapture`'s capture mode
+can't be changed afterward, switching capture mode rebuilds the use case (keyed by `captureMode` in
+a `remember(captureMode)`) and rebinds it to the camera (`LaunchedEffect(lifecycleOwner,
+captureMode)`) - a brief preview flicker on mode switch is an accepted trade-off for an infrequent,
+deliberate settings change, unlike the rotation case above which specifically avoids any rebind.
+
+**Flash and torch are actively disabled during Burst Mode or while the overlay is visible.**
+There's no user-facing control that turns either on yet, but `camera/domain/FlashTorchController.kt`
+(implemented by `camera/data/CameraXFlashTorchController.kt`, using `ImageCapture.flashMode` and
+`CameraControl.enableTorch`) exists so that constraint is explicit and enforced now rather than
+merely assumed. `CameraViewModel` collects `captureMode == BURST || overlayVisible` and calls
+`disableFlashAndTorch()` every time that becomes `true`, regardless of whatever state flash/torch
+were previously in.
+
+## Error Handling
+
+Capture and file-saving errors are **not** displayed on the main camera screen - `CaptureStatusUi`
+has no error/failure variant at all (just `Idle` / `Capturing` / `Saved`), so a failure simply
+falls back to reading `Idle`. This applies the same way to a single failed Single-Shot capture and
+to a failed image within a burst; a burst can complete with fewer than four saved images without
+ever showing an on-screen error, and one failed image does not cancel the remaining ones in that
+burst.
+
+Instead, every failure - during pending-entry creation, camera capture, or MediaStore
+finalization - is logged as one JSON object per line (JSON Lines) to an app-private log file
+(`capture_errors.log` in `filesDir`) via `camera/domain/CaptureErrorLogger.kt`, implemented by
+`camera/data/FileCaptureErrorLogger.kt` using `org.json.JSONObject` (bundled with Android, so no
+extra dependency) rather than hand-rolled string concatenation, which would risk malformed JSON if
+a message ever contained a quote or newline. Each entry records the timestamp, active capture mode,
+burst image number and configured interval (`null` for Single-Shot), output destination, error
+type, error message, and exception details, when available. A failure to write the log itself is
+swallowed (there is nowhere safer to report a logging failure than the log itself) rather than
+crashing or interrupting capture.
+
+`CaptureCoordinatorTest` covers this with fakes (`FakeCaptureErrorLogger`) rather than reading real
+files, asserting the right fields are populated for both a Single-Shot failure and a burst-image
+failure.
+
 ## Settings
 
 A gear icon in the top-right corner of the camera screen (always visible, regardless of
 permission state) opens a separate, full-screen settings screen (`settings/ui/SettingsScreen.kt`),
 reached and left via `androidx.navigation.compose.NavHost` in `CaptureApp.kt`; the system/gesture
-back action returns to the camera screen normally.
+back action returns to the camera screen normally. The screen's content is vertically scrollable
+(`Modifier.verticalScroll`) now that four settings no longer reliably fit a single screen without
+scrolling on every device/test window size.
 
-The settings screen has two controls, both backed by `SettingsRepository` /
+The settings screen has four controls, all backed by `SettingsRepository` /
 `DataStoreSettingsRepository` (Jetpack DataStore Preferences, so values persist across app
 restarts):
 
@@ -290,6 +382,10 @@ restarts):
 2. **Overlay image selection** - a "Choose image" button that launches the system Photo Picker
    (`ActivityResultContracts.PickVisualMedia`, hosted in `settings/ui/SettingsRoute.kt`). Like the
    camera permission model, this needs no runtime storage/media permission at all.
+3. **Capture mode** - a `SingleChoiceSegmentedButtonRow` choosing between Single-Shot and Burst
+   (see "Capture Mode and Burst Mode" above).
+4. **Burst interval** - a `Slider` snapped to 250 ms increments from 250 ms to 2 s
+   (`AppSettings.BURST_INTERVAL_RANGE_MILLIS`), defaulting to 500 ms.
 
 **The picker's own Uri is not kept long-term.** It's tempting to assume the Photo Picker's
 `content://` Uri stays readable indefinitely once granted - no `ContentResolver
@@ -311,10 +407,10 @@ the "settings" `NavHost` destination's back-stack entry, which is popped - cance
 common flow immediately after picking an image (pick it, see the thumbnail update, tap back), and
 a DataStore write still in flight on `viewModelScope` at that moment could be cancelled before it
 durably reached disk, so a freshly-picked image could silently fail to survive an app restart.
-`onVibrationDurationChanged`/`onImageSelected` both launch on the injected `@ApplicationScope`
-`CoroutineScope` instead (the same one `CameraViewModel` already uses to release the voice
-recognizer after `onCleared()`, and to persist overlay visibility - see above), which outlives the
-settings screen. `SettingsViewModelTest`'s `"a selection write survives the view model being
+`onVibrationDurationChanged`/`onImageSelected`/`onCaptureModeChanged`/`onBurstIntervalChanged` all
+launch on the injected `@ApplicationScope` `CoroutineScope` instead (the same one `CameraViewModel`
+already uses to release the voice recognizer after `onCleared()`, and to persist overlay
+visibility - see above), which outlives the settings screen. `SettingsViewModelTest`'s `"a selection write survives the view model being
 cleared right afterward"` case reproduces this with a real `ViewModelStore` to guard against a
 regression.
 
@@ -463,10 +559,10 @@ since none of it is fully covered by automated tests:
 
 - [ ] **Touch capture:** tapping anywhere on the live preview takes a photo; tapping the visible
       shutter button also takes a photo; tapping rapidly does not produce duplicate photos.
-- [ ] **Haptic feedback:** a short vibration pulse is felt immediately when a photo saves
-      successfully, for all three triggers (touch, volume button, voice); no pulse occurs on a
-      failed capture; toggling the device's system-wide haptics/vibration setting off suppresses it
-      (this app does not override that system setting).
+- [ ] **Haptic feedback (Single-Shot):** a short vibration pulse is felt immediately when a photo
+      saves successfully, for all three triggers (touch, volume button, voice); no pulse occurs on
+      a failed capture; toggling the device's system-wide haptics/vibration setting off suppresses
+      it (this app does not override that system setting).
 - [ ] **Volume buttons:** pressing volume up takes a photo; pressing volume down takes a photo;
       the system's on-screen media volume indicator does **not** appear while doing so; pressing
       a volume button does not change the device's media volume.
@@ -512,6 +608,20 @@ since none of it is fully covered by automated tests:
       selection survives an app restart without needing to re-pick.
 - [ ] **Volume keys on the settings screen:** while settings is open, volume buttons adjust the
       device's normal media volume instead of taking a photo.
+- [ ] **Burst Mode capture:** switch to Burst Mode in settings, trigger a capture (touch, volume,
+      or voice) and confirm four photos are saved in quick succession, spaced roughly by the
+      configured burst interval; only a single vibration pulse is felt for the whole burst, not
+      one per photo; a second capture command sent while the burst is still running does not start
+      an overlapping burst.
+- [ ] **Burst interval setting:** moving the slider changes the felt spacing between photos in the
+      next burst; the value survives an app restart.
+- [ ] **Flash/torch stay off:** on a device where flash/torch can be observed (e.g. watch for the
+      flash LED), confirm it never fires while Burst Mode is active or while the overlay image is
+      visible.
+- [ ] **Error logging:** force a capture failure if possible (e.g. fill device storage, or revoke
+      camera access mid-session) and confirm no error text appears on the camera screen, then pull
+      `capture_errors.log` (`adb shell run-as com.example.capture cat files/capture_errors.log`)
+      and confirm it contains a well-formed JSON line with the expected fields.
 
 ### Known device-manufacturer differences
 
@@ -620,6 +730,33 @@ case, it's a member of the test rule interface, not a top-level import). With th
 `CameraScreenTest` using `performTouchInput { swipeLeft() }`/`swipeRight()`, and a new assertion in
 `SettingsScreenTest` that the settings screen has zero toggleable nodes), `lintDebug` (0 issues),
 and `assembleDebug` all passed.
+
+Capture Mode/Burst Mode, Capture Performance, Burst Feedback, Flash and Torch Restrictions, and
+Error Handling were added next, per a further `app-spec.md` update. This touched
+`CaptureCoordinator.kt` (burst orchestration via `Mutex.tryLock()` instead of a blocking `lock()`,
+plus per-capture error logging), added `CaptureErrorLogger`/`FileCaptureErrorLogger`,
+`FlashTorchController`/`CameraXFlashTorchController`/`CameraControlHolder`, extended
+`AppSettings`/`SettingsRepository`/`SettingsScreen` with the capture-mode and burst-interval
+controls, removed `CaptureStatusUi`'s error/failure variant entirely (and the `Failed`-branch UI in
+`CameraScreen.kt`) since errors are no longer shown on screen, and made `CameraPreview.kt` rebuild
+its `ImageCapture` use case with `CAPTURE_MODE_MINIMIZE_LATENCY` for Burst Mode. Two real issues
+surfaced during verification, both compiler errors: a missing `pointerInput` import was already
+fixed from the previous feature, and `buildList { }`'s builder lambda turned out not to be a
+`suspend` lambda, so the burst loop's `performCapture`/`delay` calls inside it didn't compile -
+fixed by using a plain `mutableListOf`/`for` loop instead. Once compiling, two `SettingsScreenTest`
+Compose UI tests failed for the same underlying reason: the settings screen's `Column` had no
+vertical scrolling, so with four settings sections its content overflowed the test window and the
+new capture-mode/burst-interval controls fell outside the displayed/clickable area - fixed by
+adding `Modifier.verticalScroll(rememberScrollState())` to the settings `Column` and
+`.performScrollTo()` to the two new tests before interacting with those controls. With both fixes,
+`testDebugUnitTest` (76/76 tests across 7 classes, including new `CaptureCoordinatorTest` cases for
+burst spacing/overlap-rejection/partial-failure/error-logging, `CameraViewModelTest` cases for the
+single burst vibration and flash/torch enforcement, and `SettingsScreenTest`/`SettingsViewModelTest`
+cases for the two new settings), `lintDebug` (0 issues), and `assembleDebug` all passed, then the
+resulting APK was installed on a connected physical device where the settings screen (now scrolled,
+showing only vibration duration + overlay image with no toggle for it, plus capture mode and burst
+interval), the camera screen, and swipe gestures with no overlay image selected were all exercised
+for real with logcat confirmed free of crashes.
 
 The one command genuinely not run is `./gradlew connectedDebugAndroidTest` - no emulator was
 available in this environment (a physical device was connected and used for manual `adb`-driven

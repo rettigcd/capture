@@ -2,6 +2,10 @@ package com.example.capture.testing
 
 import com.example.capture.camera.domain.CameraCaptureController
 import com.example.capture.camera.domain.CameraCaptureOutcome
+import com.example.capture.camera.domain.CaptureErrorLogEntry
+import com.example.capture.camera.domain.CaptureErrorLogger
+import com.example.capture.camera.domain.CaptureMode
+import com.example.capture.camera.domain.FlashTorchController
 import com.example.capture.camera.domain.HapticFeedback
 import com.example.capture.camera.domain.OverlayVisibilityRepository
 import com.example.capture.camera.domain.PendingPhotoEntry
@@ -98,6 +102,31 @@ class FakeSettingsRepository(initial: AppSettings = AppSettings()) : SettingsRep
 
     override suspend fun setOverlayImageUri(uriString: String?) {
         _settings.value = _settings.value.copy(overlayImageUriString = uriString)
+    }
+
+    override suspend fun setCaptureMode(mode: CaptureMode) {
+        _settings.value = _settings.value.copy(captureMode = mode)
+    }
+
+    override suspend fun setBurstIntervalMillis(intervalMillis: Long) {
+        _settings.value = _settings.value.copy(burstIntervalMillis = intervalMillis)
+    }
+}
+
+class FakeCaptureErrorLogger : CaptureErrorLogger {
+    val loggedEntries = mutableListOf<CaptureErrorLogEntry>()
+
+    override suspend fun log(entry: CaptureErrorLogEntry) {
+        loggedEntries += entry
+    }
+}
+
+class FakeFlashTorchController : FlashTorchController {
+    var disableCallCount: Int = 0
+        private set
+
+    override suspend fun disableFlashAndTorch() {
+        disableCallCount++
     }
 }
 

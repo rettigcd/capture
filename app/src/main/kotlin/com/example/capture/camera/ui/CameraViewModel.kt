@@ -1,13 +1,17 @@
 package com.example.capture.camera.ui
 
+import androidx.camera.core.Camera
 import androidx.camera.core.ImageCapture
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.capture.camera.data.CameraControlHolder
 import com.example.capture.camera.data.ImageCaptureUseCaseHolder
 import com.example.capture.camera.domain.CaptureCoordinator
+import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.camera.domain.CaptureOutcome
 import com.example.capture.camera.domain.CaptureState
 import com.example.capture.camera.domain.CaptureTrigger
+import com.example.capture.camera.domain.FlashTorchController
 import com.example.capture.camera.domain.HapticFeedback
 import com.example.capture.camera.domain.OverlayVisibilityRepository
 import com.example.capture.common.ApplicationScope
@@ -23,7 +27,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -39,9 +45,11 @@ class CameraViewModel @Inject constructor(
     private val captureCoordinator: CaptureCoordinator,
     private val voiceCommandRecognizer: VoiceCommandRecognizer,
     private val imageCaptureUseCaseHolder: ImageCaptureUseCaseHolder,
+    private val cameraControlHolder: CameraControlHolder,
     private val hapticFeedback: HapticFeedback,
     private val settingsRepository: SettingsRepository,
     private val overlayVisibilityRepository: OverlayVisibilityRepository,
+    private val flashTorchController: FlashTorchController,
     @ApplicationScope private val applicationScope: CoroutineScope,
 ) : ViewModel() {
 
@@ -77,6 +85,7 @@ class CameraViewModel @Inject constructor(
             // has been picked yet, fall back to the live preview.
             overlayVisible = overlayVisible && settings.overlayImageUriString != null,
             overlayImageUriString = settings.overlayImageUriString,
+            captureMode = settings.captureMode,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), CameraUiState())
 
@@ -85,22 +94,39 @@ class CameraViewModel @Inject constructor(
         viewModelScope.launch {
             voiceCommandRecognizer.state.collect { state ->
                 if (state is VoiceRecognitionState.CommandRecognized) {
-                    captureCoordinator.requestCapture(CaptureTrigger.VoiceCommand(state.phrase))
+                    requestCapture(CaptureTrigger.VoiceCommand(state.phrase))
                 }
             }
         }
-        // Fires once per successful capture, regardless of which trigger produced it (and
-        // regardless of whether the live preview or the selected image is currently shown) - a
-        // dedicated collector rather than deriving it inside the `uiState` combine above, since
-        // that combine re-runs on every unrelated upstream emission (e.g. a voice-state change)
-        // and would otherwise repeat the pulse for as long as captureStatus stays Saved.
+        // Fires once per completed Single-Shot capture, and once per *triggered* burst (not once
+        // per image in it - see CaptureState.BurstStarted's kdoc and "Burst Feedback" in
+        // app-spec.md) - a dedicated collector rather than deriving it inside the `uiState`
+        // combine above, since that combine re-runs on every unrelated upstream emission (e.g. a
+        // voice-state change) and would otherwise repeat the pulse for as long as captureStatus
+        // stays Saved.
         viewModelScope.launch {
             captureCoordinator.state.collect { state ->
-                if (state is CaptureState.Completed && state.result.outcome is CaptureOutcome.Success) {
+                val shouldVibrate = when (state) {
+                    is CaptureState.BurstStarted -> true
+                    is CaptureState.Completed -> state.result.outcome is CaptureOutcome.Success
+                    else -> false
+                }
+                if (shouldVibrate) {
                     val durationMillis = settingsRepository.settings.first().vibrationDurationMillis
                     hapticFeedback.performCaptureSuccess(durationMillis)
                 }
             }
+        }
+        // Flash and torch must never be used while Burst Mode is active or while the overlay
+        // image is visible (see "Flash and Torch Restrictions" in app-spec.md). There is
+        // currently no user-facing control that turns either on, but this actively forces them
+        // off - rather than merely relying on nothing else enabling them - every time either
+        // condition becomes true.
+        viewModelScope.launch {
+            uiState
+                .map { it.captureMode == CaptureMode.BURST || it.overlayVisible }
+                .distinctUntilChanged()
+                .collect { mustDisableFlashAndTorch -> if (mustDisableFlashAndTorch) flashTorchController.disableFlashAndTorch() }
         }
     }
 
@@ -118,8 +144,17 @@ class CameraViewModel @Inject constructor(
      */
     fun attachImageCapture(useCase: ImageCapture?) = imageCaptureUseCaseHolder.attach(useCase)
 
+    /**
+     * Wired up as the `onCameraReady` callback for `CameraPreview`; keeps this being the only
+     * place [CameraControlHolder] is touched from the UI layer.
+     */
+    fun attachCamera(camera: Camera?) = cameraControlHolder.attach(camera)
+
     private fun requestCapture(trigger: CaptureTrigger) {
-        viewModelScope.launch { captureCoordinator.requestCapture(trigger) }
+        viewModelScope.launch {
+            val settings = settingsRepository.settings.first()
+            captureCoordinator.requestCapture(trigger, settings.captureMode, settings.burstIntervalMillis)
+        }
     }
 
     fun onCameraPermissionResult(granted: Boolean, shouldShowRationale: Boolean, hasRequestedBefore: Boolean) {
@@ -176,13 +211,20 @@ private data class CaptureVoicePermissionState(
     val voiceTriggerEnabled: Boolean,
 )
 
+/**
+ * Deliberately carries no per-outcome detail beyond idle/capturing/saved: capture and
+ * file-saving errors (single-shot or within a burst) are logged, not shown on screen - see
+ * "Error Handling" in app-spec.md and [CaptureStatusUi]'s kdoc.
+ */
 private fun CaptureState.toCaptureStatusUi(): CaptureStatusUi = when (this) {
     CaptureState.Idle -> CaptureStatusUi.Idle
-    is CaptureState.Capturing -> CaptureStatusUi.Capturing
-    is CaptureState.Completed -> when (val outcome = result.outcome) {
-        is CaptureOutcome.Success -> CaptureStatusUi.Saved(outcome.uriString)
-        is CaptureOutcome.Failure -> CaptureStatusUi.Failed(outcome.userMessage)
+    is CaptureState.Capturing, is CaptureState.BurstStarted -> CaptureStatusUi.Capturing
+    is CaptureState.Completed -> when (result.outcome) {
+        is CaptureOutcome.Success -> CaptureStatusUi.Saved
+        is CaptureOutcome.Failure -> CaptureStatusUi.Idle
     }
+    is CaptureState.BurstCompleted ->
+        if (results.any { it.outcome is CaptureOutcome.Success }) CaptureStatusUi.Saved else CaptureStatusUi.Idle
 }
 
 /**

@@ -1,11 +1,15 @@
 package com.example.capture.camera.ui
 
+import com.example.capture.camera.data.CameraControlHolder
 import com.example.capture.camera.data.ImageCaptureUseCaseHolder
 import com.example.capture.camera.domain.CameraCaptureOutcome
 import com.example.capture.camera.domain.CaptureCoordinator
+import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.permissions.PermissionStatus
 import com.example.capture.settings.domain.AppSettings
 import com.example.capture.testing.FakeCameraCaptureController
+import com.example.capture.testing.FakeCaptureErrorLogger
+import com.example.capture.testing.FakeFlashTorchController
 import com.example.capture.testing.FakeHapticFeedback
 import com.example.capture.testing.FakeOverlayVisibilityRepository
 import com.example.capture.testing.FakePhotoStorage
@@ -51,18 +55,28 @@ class CameraViewModelTest {
         haptics: FakeHapticFeedback = FakeHapticFeedback(),
         settings: FakeSettingsRepository = FakeSettingsRepository(),
         overlayVisibility: FakeOverlayVisibilityRepository = FakeOverlayVisibilityRepository(),
+        flashTorchController: FakeFlashTorchController = FakeFlashTorchController(),
+        errorLogger: FakeCaptureErrorLogger = FakeCaptureErrorLogger(),
         scheduler: TestCoroutineScheduler,
     ): CameraViewModel {
         val dispatcher = StandardTestDispatcher(scheduler)
-        val coordinator = CaptureCoordinator(camera, storage, FakeTimeProvider(), TestDispatcherProvider(dispatcher))
+        val coordinator = CaptureCoordinator(
+            camera,
+            storage,
+            FakeTimeProvider(),
+            TestDispatcherProvider(dispatcher),
+            errorLogger,
+        )
         val applicationScope = CoroutineScope(dispatcher)
         return CameraViewModel(
             coordinator,
             voice,
             ImageCaptureUseCaseHolder(),
+            CameraControlHolder(),
             haptics,
             settings,
             overlayVisibility,
+            flashTorchController,
             applicationScope,
         )
     }
@@ -91,7 +105,7 @@ class CameraViewModelTest {
         advanceUntilIdle()
 
         assertThat(camera.captureCount).isEqualTo(1)
-        assertThat(vm.uiState.value.captureStatus).isInstanceOf(CaptureStatusUi.Saved::class.java)
+        assertThat(vm.uiState.value.captureStatus).isEqualTo(CaptureStatusUi.Saved)
         assertThat(haptics.performCaptureSuccessCount).isEqualTo(1)
         assertThat(haptics.recordedDurationsMillis).containsExactly(AppSettings.DEFAULT_VIBRATION_DURATION_MILLIS)
 
@@ -115,17 +129,19 @@ class CameraViewModelTest {
     }
 
     @Test
-    fun `a failed capture does not trigger haptic feedback`() = runTest {
+    fun `a failed capture does not trigger haptic feedback and is not surfaced on screen`() = runTest {
         val camera = FakeCameraCaptureController { CameraCaptureOutcome.Failure("no camera hardware") }
         val haptics = FakeHapticFeedback()
-        val vm = buildViewModel(camera = camera, haptics = haptics, scheduler = testScheduler)
+        val errorLogger = FakeCaptureErrorLogger()
+        val vm = buildViewModel(camera = camera, haptics = haptics, errorLogger = errorLogger, scheduler = testScheduler)
         val collectJob = launch { vm.uiState.collect {} }
 
         vm.onScreenTouch()
         advanceUntilIdle()
 
-        assertThat(vm.uiState.value.captureStatus).isInstanceOf(CaptureStatusUi.Failed::class.java)
+        assertThat(vm.uiState.value.captureStatus).isEqualTo(CaptureStatusUi.Idle)
         assertThat(haptics.performCaptureSuccessCount).isEqualTo(0)
+        assertThat(errorLogger.loggedEntries).isNotEmpty()
 
         collectJob.cancel()
     }
@@ -170,7 +186,7 @@ class CameraViewModelTest {
         advanceUntilIdle()
 
         assertThat(camera.captureCount).isEqualTo(1)
-        assertThat(vm.uiState.value.captureStatus).isInstanceOf(CaptureStatusUi.Saved::class.java)
+        assertThat(vm.uiState.value.captureStatus).isEqualTo(CaptureStatusUi.Saved)
 
         collectJob.cancel()
     }
@@ -284,6 +300,75 @@ class CameraViewModelTest {
 
         assertThat(overlayVisibility.overlayVisible.value).isTrue()
         assertThat(vm.uiState.value.overlayVisible).isFalse() // no image selected yet, so still hidden
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `uiState reflects the currently configured capture mode`() = runTest {
+        val settings = FakeSettingsRepository(AppSettings(captureMode = CaptureMode.BURST))
+        val vm = buildViewModel(settings = settings, scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.captureMode).isEqualTo(CaptureMode.BURST)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `a burst vibrates exactly once regardless of per-image outcomes`() = runTest {
+        var callCount = 0
+        val camera = FakeCameraCaptureController { _ ->
+            callCount++
+            if (callCount == 2) CameraCaptureOutcome.Failure("simulated failure") else CameraCaptureOutcome.Success
+        }
+        val haptics = FakeHapticFeedback()
+        val settings = FakeSettingsRepository(AppSettings(captureMode = CaptureMode.BURST, burstIntervalMillis = 250L))
+        val vm = buildViewModel(camera = camera, haptics = haptics, settings = settings, scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+
+        vm.onScreenTouch()
+        advanceUntilIdle()
+
+        assertThat(camera.captureCount).isEqualTo(4)
+        assertThat(haptics.performCaptureSuccessCount).isEqualTo(1)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `flash and torch are disabled while burst mode is active`() = runTest {
+        val settings = FakeSettingsRepository(AppSettings(captureMode = CaptureMode.BURST))
+        val flashTorch = FakeFlashTorchController()
+        val vm = buildViewModel(settings = settings, flashTorchController = flashTorch, scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+
+        assertThat(flashTorch.disableCallCount).isAtLeast(1)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `flash and torch are disabled when the overlay becomes visible`() = runTest {
+        val settings = FakeSettingsRepository(AppSettings(overlayImageUriString = "content://fake/pic"))
+        val overlayVisibility = FakeOverlayVisibilityRepository(initial = false)
+        val flashTorch = FakeFlashTorchController()
+        val vm = buildViewModel(
+            settings = settings,
+            overlayVisibility = overlayVisibility,
+            flashTorchController = flashTorch,
+            scheduler = testScheduler,
+        )
+        val collectJob = launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+        assertThat(flashTorch.disableCallCount).isEqualTo(0)
+
+        vm.onOverlayVisibilityChanged(true)
+        advanceUntilIdle()
+
+        assertThat(flashTorch.disableCallCount).isAtLeast(1)
 
         collectJob.cancel()
     }

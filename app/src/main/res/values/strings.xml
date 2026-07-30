@@ -26,4 +26,8 @@
     <string name="settings_no_image_selected">No image selected</string>
     <string name="settings_overlay_image_thumbnail_content_description">Overlay image</string>
     <string name="overlay_image_content_description">Overlay image shown over the camera preview. Tap anywhere to take a photo. Swipe right to hide it.</string>
+    <string name="settings_capture_mode_label">Capture mode</string>
+    <string name="settings_capture_mode_single_shot">Single-Shot</string>
+    <string name="settings_capture_mode_burst">Burst</string>
+    <string name="settings_burst_interval_label">Burst interval: %1$d ms</string>
 </resources>
