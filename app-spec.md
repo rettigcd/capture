@@ -57,7 +57,7 @@ When the app starts:
 1. Request camera permission.
 2. Request microphone permission only when voice triggering is enabled or about to start.
 3. Show a useful permission-denied state instead of a blank screen.
-4. Display a full-screen rear-camera preview.
+4. Display a rear-camera preview, centered on screen and constrained to the selected capture aspect ratio rather than stretched to fill the screen (see "Capture Aspect Ratio and Preview Framing").
 5. Allow the user to take a picture by touching anywhere on the preview.
 6. Capture a picture when either volume-up or volume-down is pressed.
 7. Capture a picture when a supported spoken command is recognized.
@@ -89,6 +89,10 @@ Return a structured capture result containing at least:
 * Trigger source
 * Timestamp
 * Safe user-facing error information
+
+See "Captured image metadata and validation" for the additional diagnostic fields (actual
+dimensions, aspect ratio, tolerance match, EXIF orientation) recorded after each successful
+capture.
 
 Do not require broad storage permissions.
 
@@ -195,7 +199,7 @@ A single application module is acceptable for this startup project. Organize the
 
 The initial camera screen should include:
 
-* Full-screen camera preview
+* A camera preview centered within the camera screen and constrained to the selected capture aspect ratio, letterboxed or pillarboxed as needed rather than stretched to fill the screen (see "Capture Aspect Ratio and Preview Framing")
 * Small capture-status indicator (hidden while Overlay View is shown - see "Overlay image visibility")
 * Voice-listening indicator
 * Voice-trigger enable/disable control
@@ -214,11 +218,13 @@ Support portrait and landscape orientation without recreating unsafe camera stat
 The main camera screen supports two viewing modes:
 
 * **Camera Preview** - displays the live camera preview.
-* **Overlay View** - displays the live camera preview with the selected overlay image drawn on
-  top of it, covering the same space.
+* **Overlay View** - displays the live camera preview together with the selected overlay image.
+  The overlay image always covers the full screen - not just the aspect-ratio-constrained preview
+  area - regardless of the selected capture aspect ratio or any letterboxing/pillarboxing around
+  the preview (see "Overlay sizing").
 
-The user switches between these modes using horizontal swipe gestures on the main camera screen,
-not a settings-screen control:
+The user switches between these modes using horizontal swipe gestures recognized across the full
+camera screen, not just within the preview area, and not a settings-screen control:
 
 * When Camera Preview is visible, a left swipe causes the overlay image to slide in from the right
   edge of the screen until it reaches its normal position over the camera preview.
@@ -246,6 +252,280 @@ not just configuration change), even though it is not exposed as one.
 Overlay visibility is controlled exclusively through the swipe gestures described above. No
 user-facing setting or configuration option - on the settings screen or anywhere else - shall
 exist to enable or disable the overlay.
+
+## Capture Aspect Ratio and Preview Framing
+
+### Overview
+
+The camera preview shall display the same aspect ratio and effective sensor crop as the image
+that will be captured.
+
+The camera preview and the overlay image (see "Overlay image visibility") are independent visual
+layers:
+
+* The camera preview is constrained to the selected capture aspect ratio.
+* The overlay image always covers the entire screen.
+* Changing the capture aspect ratio shall not change the size or layout of the overlay image.
+
+### Supported capture aspect ratios
+
+The application shall support the following capture aspect ratios:
+
+* **4:3**
+* **16:9**
+
+The selected capture aspect ratio shall be persisted using DataStore and restored when the
+application starts (see "Settings").
+
+The default capture aspect ratio shall be **4:3**.
+
+Aspect ratios are defined using landscape orientation:
+
+| Setting | Landscape | Portrait |
+| ------- | --------: | -------: |
+| 4:3     |       4:3 |      3:4 |
+| 16:9    |      16:9 |     9:16 |
+
+For example, when the device is held in portrait orientation and the selected capture ratio is
+4:3, the visible camera preview shall use a 3:4 display area.
+
+### Camera preview layout
+
+The camera preview shall be centered within the available camera screen.
+
+The preview container shall use the selected capture aspect ratio.
+
+The preview shall not be stretched or distorted to fill the entire screen.
+
+When the device screen has a different aspect ratio than the selected capture ratio, unused
+screen space may appear above and below the preview or to the left and right of the preview.
+
+Unused space outside the preview shall use the application's configured background color.
+
+Example of a 4:3 capture ratio on a portrait device:
+
+```text
+┌─────────────────────────┐
+│                         │
+│    unused background    │
+│                         │
+├─────────────────────────┤
+│                         │
+│                         │
+│     CAMERA PREVIEW      │
+│          3:4            │
+│                         │
+│                         │
+├─────────────────────────┤
+│                         │
+│    unused background    │
+│                         │
+└─────────────────────────┘
+```
+
+The application shall prefer letterboxing or pillarboxing over cropping the preview merely to
+match the screen's aspect ratio.
+
+### Preview and capture consistency
+
+The visible camera preview shall represent the same framing as the resulting captured image as
+closely as CameraX and the device hardware permit.
+
+The application shall:
+
+1. Apply the same selected aspect-ratio preference to both the CameraX `Preview` and
+   `ImageCapture` use cases.
+2. Use a shared CameraX viewport and use-case group so that preview and capture use the same
+   effective sensor crop.
+3. Bind the camera use cases only after the preview view has been measured and its viewport is
+   available.
+4. Rebuild or rebind the affected CameraX use cases when the selected capture aspect ratio
+   changes.
+5. Avoid independently scaling or cropping the preview in a way that causes the captured image to
+   contain materially different framing.
+
+The application shall treat the selected aspect ratio as a preference rather than an absolute
+hardware guarantee. If the requested aspect ratio is unavailable for a particular camera or
+use-case combination, CameraX may select the closest supported configuration.
+
+Any fallback shall be logged (see "Captured image metadata and validation"). The log entry shall
+include:
+
+* requested aspect ratio
+* actual preview resolution
+* actual capture resolution
+* actual preview aspect ratio
+* actual capture aspect ratio
+* selected camera
+* device orientation
+* fallback reason, when known
+
+### Preview scaling
+
+The camera preview shall preserve the camera stream's aspect ratio.
+
+The preview shall fill its aspect-ratio-constrained container without distortion.
+
+Minor cropping within the preview container is acceptable only when required because the selected
+camera stream differs slightly from the requested ratio.
+
+The application shall not scale the preview to fill the entire device screen when doing so would
+change the visible framing relative to the captured image.
+
+### Orientation changes
+
+The preview container shall adapt when the device orientation changes.
+
+In portrait orientation:
+
+* 4:3 capture shall display as 3:4.
+* 16:9 capture shall display as 9:16.
+
+In landscape orientation:
+
+* 4:3 capture shall display as 4:3.
+* 16:9 capture shall display as 16:9.
+
+The camera preview, capture rotation, and viewport shall be updated consistently after an
+orientation change.
+
+The overlay image shall continue to fill the entire screen after orientation changes.
+
+## Overlay sizing
+
+### Independence from capture aspect ratio
+
+The overlay image shall be independent of the camera preview and capture aspect ratio.
+
+The overlay shall not be placed inside the aspect-ratio-constrained camera preview container.
+
+The overlay and camera preview shall be sibling layers within a full-screen parent container.
+
+Conceptual layer order:
+
+```text
+Full-screen root container
+├── centered camera preview constrained to capture aspect ratio
+├── camera controls and status indicators
+└── full-screen overlay image
+```
+
+When Overlay View is shown, the overlay image shall appear above:
+
+* the camera preview
+* unused preview background areas
+* the capture-status indicator
+* the visible shutter control
+* all other camera-screen content
+
+The camera shall remain active underneath the overlay image, and capture shall remain available
+through the supported touch, voice, and volume-button triggers - consistent with "Overlay image
+visibility" above.
+
+### Full-screen overlay behavior
+
+The overlay image shall cover the full available screen regardless of:
+
+* selected capture aspect ratio
+* preview dimensions
+* camera resolution
+* device orientation
+* letterboxing or pillarboxing around the preview
+
+Changing between 4:3 and 16:9 capture shall not resize, reposition, or rebind the overlay image.
+
+Example with Overlay View shown:
+
+```text
+┌─────────────────────────┐
+│                         │
+│                         │
+│      OVERLAY IMAGE      │
+│                         │
+│      FULL SCREEN        │
+│                         │
+│                         │
+└─────────────────────────┘
+```
+
+### Overlay image scaling
+
+The overlay image shall preserve its original aspect ratio.
+
+By default, the overlay shall use center-crop scaling:
+
+* The image shall fill the entire screen.
+* The image shall not be stretched or distorted.
+* Portions of the image may be cropped when its aspect ratio differs from the screen.
+* Cropping shall be centered unless another focal-position feature is added later.
+
+The overlay shall not use the selected camera capture ratio when determining its size or crop.
+
+The overlay image shall be scaled against the full-screen overlay bounds.
+
+### Overlay gestures
+
+The swipe gestures described in "Overlay image visibility" shall operate across the full screen,
+not only within the camera preview area.
+
+A left swipe shall display the overlay by sliding it in from the right.
+
+A right swipe shall dismiss the overlay by sliding it off to the right.
+
+Gesture thresholds and tap-versus-swipe detection shall remain unchanged regardless of the
+selected capture aspect ratio.
+
+## Captured image metadata and validation
+
+After each successful capture, the application shall record the actual saved image dimensions.
+
+The capture result or diagnostic log shall include:
+
+* image width in pixels
+* image height in pixels
+* normalized aspect ratio
+* requested aspect ratio
+* whether the actual ratio matched the requested ratio within an allowed tolerance
+* image URI or destination identifier
+* EXIF orientation, when available
+
+Aspect-ratio comparisons shall use a tolerance rather than exact floating-point equality.
+
+Portrait and landscape versions of the same ratio shall be treated as equivalent.
+
+Examples:
+
+| Dimensions  | Classified Ratio |
+| ----------- | ----------------- |
+| 4032 × 3024 | 4:3               |
+| 3024 × 4032 | 4:3               |
+| 4000 × 2250 | 16:9              |
+| 2250 × 4000 | 16:9              |
+
+If the captured image does not match the requested ratio within the configured tolerance, the
+application shall log the discrepancy but shall not display an on-screen error (consistent with
+"Error Handling").
+
+## Acceptance criteria for aspect ratio and preview framing
+
+This part of the application is complete when all of the following are true:
+
+1. A 4:3 capture setting produces a centered 4:3 preview in landscape and a centered 3:4 preview
+   in portrait.
+2. A 16:9 capture setting produces a centered 16:9 preview in landscape and a centered 9:16
+   preview in portrait.
+3. The preview does not stretch to match the phone screen.
+4. The preview framing closely matches the resulting captured image.
+5. The same viewport or crop region is used for preview and capture.
+6. Changing the capture ratio resizes and rebinds the camera preview and capture use cases.
+7. Changing the capture ratio does not change the overlay image's bounds.
+8. The overlay image covers the entire screen, including unused space surrounding the preview.
+9. The overlay image preserves its own aspect ratio and uses center-crop scaling.
+10. Touch, voice, and volume-button capture continue to work while the overlay is visible.
+11. The selected capture ratio persists across application restarts.
+12. Actual captured dimensions and aspect ratio are recorded in diagnostic logs.
+13. Orientation changes update the camera preview and capture rotation without affecting the
+    overlay's full-screen behavior.
 
 ## Capture Mode
 
@@ -370,8 +650,14 @@ The settings screen lets the user configure:
    Single-Shot Mode and Burst Mode (see "Capture Mode").
 4. **Burst interval** - a slider with discrete snap points every 250 ms from 250 ms to 2 seconds,
    defaulting to 500 ms (see "Burst Mode").
+5. **Capture aspect ratio** - a control choosing between 4:3 (default) and 16:9 (see "Capture
+   Aspect Ratio and Preview Framing"). Applies to the visible preview and to both Single-Shot and
+   Burst capture; does not affect the overlay image's size or position at all (see "Overlay
+   sizing"). Changing this setting while a burst is in progress must not alter the active burst -
+   the new ratio takes effect only once that burst finishes. Applying a new ratio may briefly stop
+   and rebind the affected camera use cases; no image may be captured during that rebind.
 
-Persist all four settings, and the overlay-visibility state described above, across app restarts
+Persist all five settings, and the overlay-visibility state described above, across app restarts
 (e.g. with Jetpack DataStore). Keep the settings screen testable the same way as the camera screen:
 stateless composables driven by state and callbacks, with the actual persistence mechanism behind
 an interface.
@@ -404,7 +690,9 @@ Write unit tests for:
 * Trigger-source recording
 * ViewModel behavior
 * Permission-state decision logic
-* Settings persistence (defaults, reading back a saved value, and updates to each of the four settings)
+* Settings persistence (defaults, reading back a saved value, and updates to each of the five settings)
+* Aspect-ratio classification uses a tolerance rather than exact floating-point equality, and treats a dimension pair and its rotated (portrait/landscape) counterpart as the same ratio (see the worked examples in "Captured image metadata and validation")
+* A capture-aspect-ratio change made while a burst is in progress does not alter that active burst; the new ratio only takes effect once the burst finishes
 * Overlay-visibility persistence (defaults, reading back a saved value, and that it correctly reflects the last swipe-driven state) even though it is not presented on the settings screen
 * A setting or overlay-visibility write is durably persisted even if the owning ViewModel is cleared immediately after the write is triggered (not just that the in-memory/observed state updates) - this is the specific failure mode a screen-scoped ViewModel's coroutine scope being cancelled by navigation would otherwise hide
 * Selecting an overlay image copies it into app-private storage (and persists a reference to that copy) rather than persisting the picker's own returned Uri directly - test this by asserting what gets persisted is not simply the source Uri unchanged, and that a failed copy leaves the previous selection in place instead of persisting an unreadable reference
@@ -433,7 +721,7 @@ Write Compose tests verifying:
 * A left swipe on the camera preview shows the overlay image (Overlay View), and a right swipe on the overlay image hides it again (Camera Preview)
 * The restored overlay-visibility state (from the last time the app was closed) is reflected correctly on launch
 * No settings-screen control exists for enabling or disabling the overlay
-* The settings screen reflects and updates each of the four stored settings, including the capture-mode selector and the burst-interval slider
+* The settings screen reflects and updates each of the five stored settings, including the capture-mode selector, the burst-interval slider, and the capture-aspect-ratio control
 
 The composables must accept state and callbacks so they can be tested without starting a real camera.
 
@@ -500,7 +788,7 @@ Create a useful `README.md` containing:
 * How to run each test category
 * How to change the voice-command vocabulary
 * How to replace `SpeechRecognizer`
-* Manual test checklist for touch, voice, volume buttons, rotation, permissions, image storage, overlay swipe gestures (smooth gesture-following animation is hard to unit test), and Burst Mode (actual device timing between captures, flash/torch staying off, and the single burst-triggered vibration)
+* Manual test checklist for touch, voice, volume buttons, rotation, permissions, image storage, overlay swipe gestures (smooth gesture-following animation is hard to unit test), Burst Mode (actual device timing between captures, flash/torch staying off, and the single burst-triggered vibration), and capture aspect ratio (letterboxing/pillarboxing at each ratio and orientation, the overlay staying full-screen regardless of the selected ratio, and preview framing matching the captured image)
 * Known device-manufacturer differences involving volume keys, camera behavior, and speech recognition
 
 Include a Mermaid component or flow diagram showing:
