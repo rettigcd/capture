@@ -1,0 +1,148 @@
+package com.example.capture.testing
+
+import com.example.capture.camera.domain.CameraCaptureController
+import com.example.capture.camera.domain.CameraCaptureOutcome
+import com.example.capture.camera.domain.HapticFeedback
+import com.example.capture.camera.domain.OverlayVisibilityRepository
+import com.example.capture.camera.domain.PendingPhotoEntry
+import com.example.capture.camera.domain.PhotoStorage
+import com.example.capture.common.DispatcherProvider
+import com.example.capture.common.TimeProvider
+import com.example.capture.settings.domain.AppSettings
+import com.example.capture.settings.domain.OverlayImageStore
+import com.example.capture.settings.domain.SettingsRepository
+import com.example.capture.voice.domain.VoiceCommandRecognizer
+import com.example.capture.voice.domain.VoiceRecognitionState
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import java.io.IOException
+
+/**
+ * Test doubles shared by unit tests across the `camera` and `voice` packages. Kept as fakes
+ * (rather than a mocking framework) per the project's testing style so behavior is easy to read
+ * and assert against directly.
+ */
+
+class TestDispatcherProvider(private val dispatcher: CoroutineDispatcher) : DispatcherProvider {
+    override val main: CoroutineDispatcher get() = dispatcher
+    override val default: CoroutineDispatcher get() = dispatcher
+    override val io: CoroutineDispatcher get() = dispatcher
+}
+
+class FakeTimeProvider(startMillis: Long = 0L) : TimeProvider {
+    var currentMillis: Long = startMillis
+    override fun currentTimeMillis(): Long = currentMillis
+}
+
+class FakeCameraCaptureController(
+    private val outcome: (PendingPhotoEntry) -> CameraCaptureOutcome = { CameraCaptureOutcome.Success },
+) : CameraCaptureController {
+    var captureCount: Int = 0
+        private set
+    val capturedEntries = mutableListOf<PendingPhotoEntry>()
+
+    override suspend fun captureTo(entry: PendingPhotoEntry): CameraCaptureOutcome {
+        captureCount++
+        capturedEntries += entry
+        return outcome(entry)
+    }
+}
+
+class FakePhotoStorage(
+    private var nextId: Int = 0,
+    var failCreate: Boolean = false,
+    var failFinalize: Boolean = false,
+) : PhotoStorage {
+    val created = mutableListOf<PendingPhotoEntry>()
+    val finalized = mutableListOf<PendingPhotoEntry>()
+    val discarded = mutableListOf<PendingPhotoEntry>()
+
+    override suspend fun createPendingEntry(timestampMillis: Long): PendingPhotoEntry {
+        if (failCreate) throw IOException("Fake: unable to create MediaStore entry")
+        val entry = PendingPhotoEntry("content://fake/photo/${nextId++}")
+        created += entry
+        return entry
+    }
+
+    override suspend fun finalizeEntry(entry: PendingPhotoEntry): String {
+        if (failFinalize) throw IOException("Fake: unable to finalize MediaStore entry")
+        finalized += entry
+        return entry.uriString
+    }
+
+    override suspend fun discardEntry(entry: PendingPhotoEntry) {
+        discarded += entry
+    }
+}
+
+class FakeHapticFeedback : HapticFeedback {
+    var performCaptureSuccessCount: Int = 0
+        private set
+    val recordedDurationsMillis = mutableListOf<Long>()
+
+    override fun performCaptureSuccess(durationMillis: Long) {
+        performCaptureSuccessCount++
+        recordedDurationsMillis += durationMillis
+    }
+}
+
+class FakeSettingsRepository(initial: AppSettings = AppSettings()) : SettingsRepository {
+    private val _settings = MutableStateFlow(initial)
+    override val settings: StateFlow<AppSettings> = _settings.asStateFlow()
+
+    override suspend fun setVibrationDurationMillis(durationMillis: Long) {
+        _settings.value = _settings.value.copy(vibrationDurationMillis = durationMillis)
+    }
+
+    override suspend fun setOverlayImageUri(uriString: String?) {
+        _settings.value = _settings.value.copy(overlayImageUriString = uriString)
+    }
+}
+
+class FakeOverlayImageStore(var failNextPersist: Boolean = false) : OverlayImageStore {
+    val persistedSourceUris = mutableListOf<String>()
+
+    override suspend fun persist(sourceUriString: String): String {
+        if (failNextPersist) {
+            failNextPersist = false
+            throw IOException("Fake: unable to persist the overlay image")
+        }
+        persistedSourceUris += sourceUriString
+        return "file://fake/persisted/$sourceUriString"
+    }
+}
+
+class FakeOverlayVisibilityRepository(initial: Boolean = false) : OverlayVisibilityRepository {
+    private val _overlayVisible = MutableStateFlow(initial)
+    override val overlayVisible: StateFlow<Boolean> = _overlayVisible.asStateFlow()
+
+    override suspend fun setOverlayVisible(visible: Boolean) {
+        _overlayVisible.value = visible
+    }
+}
+
+class FakeVoiceCommandRecognizer : VoiceCommandRecognizer {
+    private val _state = MutableStateFlow<VoiceRecognitionState>(VoiceRecognitionState.Idle)
+    override val state: StateFlow<VoiceRecognitionState> = _state.asStateFlow()
+
+    var startCount: Int = 0
+        private set
+    var stopCount: Int = 0
+        private set
+
+    override suspend fun start() {
+        startCount++
+        _state.value = VoiceRecognitionState.Listening
+    }
+
+    override suspend fun stop() {
+        stopCount++
+        _state.value = VoiceRecognitionState.Idle
+    }
+
+    fun emit(state: VoiceRecognitionState) {
+        _state.value = state
+    }
+}

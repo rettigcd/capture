@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Capture</string>
+
+    <string name="camera_preview_content_description">Live camera preview. Tap anywhere to take a photo.</string>
+    <string name="shutter_button_content_description">Take photo</string>
+    <string name="voice_toggle_content_description">Toggle voice-activated capture</string>
+    <string name="voice_listening_indicator">Listening for a voice command</string>
+    <string name="voice_not_listening_indicator">Voice capture is off</string>
+
+    <string name="capture_status_idle">Ready</string>
+    <string name="capture_status_capturing">Capturing…</string>
+    <string name="capture_status_saved">Photo saved</string>
+
+    <string name="permission_camera_rationale">Capture needs camera access to show the live preview and take photos.</string>
+    <string name="permission_camera_denied">Camera permission was denied. Grant it in Settings to use Capture.</string>
+    <string name="permission_camera_request">Grant camera permission</string>
+    <string name="open_system_settings">Open settings</string>
+
+    <string name="settings_button_content_description">Open settings</string>
+    <string name="settings_title">Settings</string>
+    <string name="back_content_description">Navigate back</string>
+    <string name="settings_vibration_duration_label">Vibration duration: %1$d ms</string>
+    <string name="settings_overlay_image_label">Overlay image</string>
+    <string name="settings_choose_image_button">Choose image</string>
+    <string name="settings_no_image_selected">No image selected</string>
+    <string name="settings_overlay_image_thumbnail_content_description">Overlay image</string>
+    <string name="overlay_image_content_description">Overlay image shown over the camera preview. Tap anywhere to take a photo. Swipe right to hide it.</string>
+</resources>

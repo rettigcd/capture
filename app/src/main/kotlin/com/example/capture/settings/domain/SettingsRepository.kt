@@ -1,0 +1,15 @@
+package com.example.capture.settings.domain
+
+import kotlinx.coroutines.flow.Flow
+
+/**
+ * Abstraction over settings persistence so [com.example.capture.settings.ui.SettingsViewModel]
+ * and [com.example.capture.camera.ui.CameraViewModel] never depend on Jetpack DataStore directly,
+ * and so tests can control settings deterministically without touching disk.
+ */
+interface SettingsRepository {
+    val settings: Flow<AppSettings>
+
+    suspend fun setVibrationDurationMillis(durationMillis: Long)
+    suspend fun setOverlayImageUri(uriString: String?)
+}

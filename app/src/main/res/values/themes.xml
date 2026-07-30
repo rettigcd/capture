@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Minimal launch theme; Jetpack Compose (Theme.kt) owns all real theming
+         once the activity's content view is set. This XML theme only controls
+         the system window before Compose takes over. -->
+    <style name="Theme.Capture" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@android:color/black</item>
+        <item name="android:navigationBarColor">@android:color/black</item>
+    </style>
+</resources>
