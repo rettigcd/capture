@@ -119,8 +119,26 @@ Requirements:
 * Prefer on-device recognition when the OS and installed recognizer support it.
 * Add all required manifest permissions and Android 11+ recognition-service queries.
 * Make it possible to replace the implementation later with an offline continuous keyword or command-recognition engine.
+* The speech-recognition engine and the recognized command vocabulary shall be independently replaceable. The remainder of the application shall not depend on whether commands originate from Android SpeechRecognizer, an offline keyword engine, or another future implementation.
 
 Provide an obvious UI indication whenever the microphone is actively listening. Voice triggering should be user-controllable rather than silently recording.
+
+## Future Voice Engines
+
+The architecture should permit future implementations including:
+
+Android SpeechRecognizer (initial implementation)
+On-device continuous command-recognition engines
+Offline keyword spotting
+Vendor-specific speech SDKs
+Custom machine-learning inference engines
+
+No changes should be required to the capture coordinator, camera logic, or UI when replacing one voice engine with another.
+
+Posible future implementations might include:
+* openWakeWord
+* Vosk
+* Picovoice Porcupine
 
 ## Capture coordination
 
