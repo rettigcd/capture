@@ -381,11 +381,16 @@ mapping:
 * 4:3 capture shall display as 3:4.
 * 16:9 capture shall display as 9:16.
 
-This mapping never changes at runtime, since the app's own layout orientation never changes.
-However, the physical device can still be rotated in the user's hand while the app's layout stays
-locked to portrait; the camera preview, capture rotation, and viewport shall still be updated
-consistently for that physical rotation (so a captured photo has the correct orientation/EXIF tag
-even though the on-screen layout itself never rotates).
+This mapping never changes at runtime, since the app's own layout orientation never changes. The
+physical device can still be rotated in the user's hand while the app's layout stays locked to
+portrait, but the physical camera sensor's long axis, the app's locked-portrait layout, and the
+preview container are always aligned with the phone body's long axis regardless of how it is held -
+so physical rotation shall never change what the preview displays. The on-screen preview - its
+framing, aspect ratio, and viewport - shall stay fixed at all times, independent of physical device
+rotation; only the `ImageCapture` use case's target rotation (and therefore the captured photo's
+EXIF orientation tag) shall track the physical device's rotation, so a captured photo still records
+the orientation it was actually taken in even though nothing on screen changes when the phone is
+rotated.
 
 The overlay image shall continue to fill the entire screen regardless of the physical device's
 rotation.
@@ -937,8 +942,10 @@ The application shall log:
 - capture resolution
 - requested aspect ratio
 - actual aspect ratio
-- display rotation
-- capture rotation
+- display rotation (the fixed, locked-portrait rotation the preview and viewport always use - see
+  "Orientation changes")
+- capture rotation (the `ImageCapture` use case's target rotation, which tracks the physical
+  device's rotation - see "Orientation changes")
 - capture mode
 - burst number (if applicable)
 

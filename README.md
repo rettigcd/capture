@@ -1029,6 +1029,22 @@ covered by code review rather than a dedicated test, rather than adding new susp
 infrastructure to the fakes just for symmetry. With that test removed, `testDebugUnitTest` (112/112
 tests across 9 classes), `lintDebug` (0 issues), and `assembleDebug` all passed.
 
+A rotation bug was fixed next: physically rotating the device distorted the on-screen preview
+(stretching it between the 4:3/16:9 portrait mapping and its landscape counterpart), even though
+the app's window stays locked to portrait. The root cause was in `CameraPreview.kt`'s
+`OrientationEventListener` callback, which had been updating *both* the `Preview` and `ImageCapture`
+use cases' `targetRotation` on every physical-rotation bucket change - correct for `ImageCapture`
+(needed for the saved photo's EXIF orientation), but wrong for `Preview`, since the preview
+container's aspect ratio is fixed to the locked-portrait mapping and never itself rotates. This
+contradicted the "Orientation changes" wording in `app-spec.md`, which was corrected as part of this
+fix: the preview, its framing, and the shared viewport now stay fixed regardless of physical device
+rotation, and only `ImageCapture.targetRotation` (and therefore EXIF orientation) tracks it.
+`CameraDiagnosticsSnapshot` gained a `captureRotation` field alongside the existing (now genuinely
+fixed) `displayRotation`, matching the "Camera Diagnostics" spec section, which already listed both
+as separate fields. `testDebugUnitTest` (112/112 tests across 9 classes - the existing
+`CameraPreviewRotationTest` needed no changes, since `surfaceRotationFor` itself didn't change),
+`lintDebug` (0 issues), and `assembleDebug` all passed.
+
 The one command genuinely not run is `./gradlew connectedDebugAndroidTest` - no emulator was
 available in this environment (a physical device was connected and used for manual `adb`-driven
 smoke testing instead, which is not the same as running the instrumented test suite), which is

@@ -156,6 +156,7 @@ class AndroidDiagnosticsLogger @Inject constructor(
         put("captureResolutionPx", captureResolutionPx ?: JSONObject.NULL)
         put("requestedAspectRatio", requestedAspectRatio.name)
         put("displayRotation", displayRotation)
+        put("captureRotation", captureRotation)
         put("captureMode", captureMode.name)
     }.toString()
 

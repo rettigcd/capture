@@ -116,23 +116,38 @@ fun CameraPreview(
         val camera = cameraProvider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, useCaseGroup)
         onImageCaptureReady(imageCaptureUseCase)
         onCameraReady(camera)
-        onCameraDiagnostics(cameraDiagnosticsSnapshot(previewUseCase, imageCaptureUseCase, captureAspectRatio, rotation, captureMode))
+        onCameraDiagnostics(
+            cameraDiagnosticsSnapshot(previewUseCase, imageCaptureUseCase, captureAspectRatio, rotation, rotation, captureMode),
+        )
     }
 
-    // Keeps target rotation (and thus capture/EXIF orientation) in sync with how the device is
-    // physically held, even though the app's own locked-portrait window never rotates and so
-    // never reports a Configuration/Display.getRotation() change on its own - see "Orientation
-    // changes" in app-spec.md. OrientationEventListener reads the raw accelerometer instead,
-    // independent of the window's (locked) rotation.
+    // Keeps the ImageCapture use case's target rotation (and thus the captured photo's EXIF
+    // orientation) in sync with how the device is physically held, even though the app's own
+    // locked-portrait window never rotates and so never reports a Configuration/
+    // Display.getRotation() change on its own - see "Orientation changes" in app-spec.md.
+    // OrientationEventListener reads the raw accelerometer instead, independent of the window's
+    // (locked) rotation. previewUseCase.targetRotation is deliberately left untouched here: the
+    // physical camera sensor's long axis, the locked-portrait layout, and the preview container
+    // are always aligned with the phone body regardless of how it's held, so the on-screen preview
+    // must stay fixed - only the captured photo's orientation metadata should change.
     val orientationEventListener = remember {
         object : OrientationEventListener(context) {
             override fun onOrientationChanged(orientationDegrees: Int) {
                 if (orientationDegrees == ORIENTATION_UNKNOWN) return
-                val rotation = surfaceRotationFor(orientationDegrees)
-                if (rotation == previewUseCase.targetRotation) return
-                previewUseCase.targetRotation = rotation
-                imageCaptureUseCase.targetRotation = rotation
-                onCameraDiagnostics(cameraDiagnosticsSnapshot(previewUseCase, imageCaptureUseCase, captureAspectRatio, rotation, captureMode))
+                val captureRotation = surfaceRotationFor(orientationDegrees)
+                if (captureRotation == imageCaptureUseCase.targetRotation) return
+                imageCaptureUseCase.targetRotation = captureRotation
+                val displayRotation = ContextCompat.getDisplayOrDefault(context).rotation
+                onCameraDiagnostics(
+                    cameraDiagnosticsSnapshot(
+                        previewUseCase,
+                        imageCaptureUseCase,
+                        captureAspectRatio,
+                        displayRotation,
+                        captureRotation,
+                        captureMode,
+                    ),
+                )
             }
         }
     }
@@ -180,6 +195,7 @@ private fun cameraDiagnosticsSnapshot(
     imageCaptureUseCase: ImageCapture,
     captureAspectRatio: CaptureAspectRatio,
     displayRotation: Int,
+    captureRotation: Int,
     captureMode: CaptureMode,
 ): CameraDiagnosticsSnapshot = CameraDiagnosticsSnapshot(
     timestampMillis = System.currentTimeMillis(),
@@ -188,5 +204,6 @@ private fun cameraDiagnosticsSnapshot(
     captureResolutionPx = imageCaptureUseCase.resolutionInfo?.resolution?.let { "${it.width}x${it.height}" },
     requestedAspectRatio = captureAspectRatio,
     displayRotation = displayRotation,
+    captureRotation = captureRotation,
     captureMode = captureMode,
 )

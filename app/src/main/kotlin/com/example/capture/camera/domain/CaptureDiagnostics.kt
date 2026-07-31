@@ -72,8 +72,11 @@ sealed interface CaptureDiagnosticEvent {
 
 /**
  * Point-in-time snapshot of the bound camera, logged whenever it changes (initial bind, or a
- * display-rotation bucket change) - see "Camera Diagnostics" in app-spec.md. Resolutions are
- * formatted "WxH" (or `null` if CameraX hasn't reported one yet).
+ * capture-rotation bucket change) - see "Camera Diagnostics" in app-spec.md. Resolutions are
+ * formatted "WxH" (or `null` if CameraX hasn't reported one yet). [displayRotation] is fixed (the
+ * app is locked to portrait, so the preview and viewport never rotate); [captureRotation] tracks
+ * the physical device's rotation and only affects the captured photo's EXIF orientation - see
+ * "Orientation changes" in app-spec.md.
  */
 data class CameraDiagnosticsSnapshot(
     val timestampMillis: Long,
@@ -82,6 +85,7 @@ data class CameraDiagnosticsSnapshot(
     val captureResolutionPx: String?,
     val requestedAspectRatio: CaptureAspectRatio,
     val displayRotation: Int,
+    val captureRotation: Int,
     val captureMode: CaptureMode,
 )
 
