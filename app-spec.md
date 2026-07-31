@@ -824,3 +824,150 @@ At each stage, keep the project internally consistent. Do not leave pseudocode, 
 When a design decision is uncertain, choose the simplest production-sensible implementation and record the decision in the README rather than stopping to ask me minor questions.
 
 Begin by showing the final file tree. Then provide every required file in a clearly labeled code block with its full relative path.
+
+# Developer Diagnostics
+
+## Gesture Diagnostics
+
+The application shall support a debug mode that records the complete processing path of every capture request.
+
+The diagnostics shall make it possible to determine why a capture did or did not occur.
+
+Detailed gesture diagnostics and visual debug overlays shall be disabled in Release builds. Normal operational and error logging may remain enabled.
+
+### Gesture Processing
+
+For every touch interaction, debug logging shall record:
+
+- pointer down position
+- pointer up position
+- gesture duration
+- horizontal movement
+- vertical movement
+- total movement distance
+- touch-slop threshold
+- swipe threshold
+- final gesture classification
+
+Possible classifications include:
+
+- Tap
+- Swipe Left
+- Swipe Right
+- Movement Below Swipe Threshold
+- Cancelled
+
+### Gesture Cancellation Diagnostics
+
+The application shall record additional diagnostic information whenever a touch interaction does not result in a completed capture request.
+
+For every cancelled or ignored gesture, debug logging shall include, when available:
+
+- whether the pointer event had already been consumed by another component
+- whether the gesture was cancelled before completion
+- the reason for cancellation, if available
+- the UI component or layer that received the event
+- whether the privacy overlay was visible
+- whether touch capture was enabled
+- whether the camera was currently accepting capture requests
+
+Possible cancellation reasons include:
+
+- Pointer event consumed by another component
+- Gesture cancelled
+- Movement exceeded tap threshold
+- Application state changed
+- Camera temporarily unavailable
+- Unknown
+
+These diagnostics shall make it possible to determine why an apparent tap did not result in a capture request.
+
+### Capture Request Processing
+
+Every attempted capture, whether ultimately accepted or rejected, shall generate a unique Capture Attempt ID before validation begins.
+
+The capture trigger source shall be logged as one of:
+- Touch
+- Voice
+- Volume Button
+- Shutter Button
+- Other
+
+The Capture Attempt ID shall be propagated through the complete capture pipeline.
+
+Log Capture Events and Gesture Events.
+
+If a capture request is rejected, the reason shall be logged.
+
+Possible rejection reasons include:
+
+- Camera not ready
+- Camera rebinding
+- Capture already running
+- Burst already running
+- ImageCapture unavailable
+- Application inactive
+- Unknown
+
+### Gesture Events
+
+- Gesture detected
+- Gesture classified
+- Gesture accepted
+- Gesture cancelled
+
+### Capture Events
+
+- Capture requested
+- Capture accepted
+- Capture rejected
+- CameraX request submitted
+- CameraX capture started
+- Image saved
+- Capture completed
+- CameraX error
+
+### Camera Diagnostics
+
+The application shall log:
+
+- selected camera
+- timestamp with millisecond resolution
+- preview resolution
+- capture resolution
+- requested aspect ratio
+- actual aspect ratio
+- display rotation
+- capture rotation
+- capture mode
+- burst number (if applicable)
+
+### Diagnostic Correlation
+
+Every log entry associated with a capture attempt shall include the same Capture Attempt ID.
+
+This shall make it possible to reconstruct the complete path from user interaction through successful image save or failure.
+
+### Diagnostic Persistence
+
+Diagnostic logging shall be viewable through Logcat.
+
+The implementation may additionally provide an option to save diagnostic logs to a file for post-analysis.
+
+Log file generation shall be optional and disabled by default.
+
+### Debug Overlay
+
+Debug builds shall provide an optional developer-controlled diagnostic overlay.
+
+- touch location
+- gesture classification
+- capture state
+- current aspect ratio
+- camera state
+- Capture Attempt ID
+- capture trigger source
+
+Debug overlays shall never appear in Release builds.
+
+
