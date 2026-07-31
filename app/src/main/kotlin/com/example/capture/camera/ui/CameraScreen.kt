@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Camera
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
@@ -53,10 +54,16 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import com.example.capture.BuildConfig
 import com.example.capture.R
+import com.example.capture.camera.domain.CaptureAspectRatio
+import com.example.capture.camera.domain.GestureCancellationReason
+import com.example.capture.camera.domain.GestureClassification
+import com.example.capture.camera.domain.GestureDiagnosticEvent
 import com.example.capture.camera.domain.previewRatio
 import com.example.capture.permissions.PermissionStatus
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -77,6 +84,10 @@ fun CameraScreen(
     onOpenSystemSettings: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
+    onGestureDiagnosticEvent: (GestureDiagnosticEvent) -> Unit = {},
+    diagnosticsOverlayEnabled: Boolean = false,
+    diagnosticsOverlayInfo: DiagnosticsOverlayInfo = DiagnosticsOverlayInfo(),
+    onDiagnosticsOverlayToggled: () -> Unit = {},
     cameraPreview: @Composable (Modifier) -> Unit = {},
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -87,6 +98,9 @@ fun CameraScreen(
                 onShutterButtonClick = onShutterButtonClick,
                 onVoiceTriggerToggle = onVoiceTriggerToggle,
                 onOverlayVisibilityChanged = onOverlayVisibilityChanged,
+                onGestureDiagnosticEvent = onGestureDiagnosticEvent,
+                diagnosticsOverlayEnabled = diagnosticsOverlayEnabled,
+                diagnosticsOverlayInfo = diagnosticsOverlayInfo,
                 cameraPreview = cameraPreview,
             )
         } else {
@@ -107,6 +121,22 @@ fun CameraScreen(
         ) {
             Icon(Icons.Filled.Settings, contentDescription = null, tint = Color.White)
         }
+
+        // Debug-only: never shown in a Release build (see "Debug Overlay" in app-spec.md), even
+        // though the toggle state itself is plain in-memory ViewModel state - BuildConfig.DEBUG is
+        // a compile-time constant, so R8 dead-code-eliminates this branch entirely in Release.
+        if (BuildConfig.DEBUG) {
+            val diagnosticsToggleDescription = stringResource(R.string.diagnostics_overlay_toggle_content_description)
+            IconButton(
+                onClick = onDiagnosticsOverlayToggled,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(8.dp)
+                    .semantics { contentDescription = diagnosticsToggleDescription },
+            ) {
+                Icon(Icons.Filled.BugReport, contentDescription = null, tint = Color.White)
+            }
+        }
     }
 }
 
@@ -117,6 +147,9 @@ private fun GrantedCameraContent(
     onShutterButtonClick: () -> Unit,
     onVoiceTriggerToggle: (Boolean) -> Unit,
     onOverlayVisibilityChanged: (Boolean) -> Unit,
+    onGestureDiagnosticEvent: (GestureDiagnosticEvent) -> Unit,
+    diagnosticsOverlayEnabled: Boolean,
+    diagnosticsOverlayInfo: DiagnosticsOverlayInfo,
     cameraPreview: @Composable (Modifier) -> Unit,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -171,6 +204,9 @@ private fun GrantedCameraContent(
                             }
                             onOverlayVisibilityChanged(shouldShow)
                         },
+                        overlayVisible = uiState.overlayVisible,
+                        cameraAcceptingCaptureRequests = uiState.captureStatus != CaptureStatusUi.Capturing,
+                        onGestureEvent = onGestureDiagnosticEvent,
                     )
                 },
         ) {
@@ -233,6 +269,20 @@ private fun GrantedCameraContent(
                 Icon(Icons.Filled.Camera, contentDescription = null)
             }
         }
+
+        // Debug-only: see the equivalent BuildConfig.DEBUG gate in CameraScreen's kdoc/toggle
+        // button. diagnosticsOverlayEnabled is itself only ever true in a debug build (the toggle
+        // that flips it is only rendered there), but the BuildConfig check here is what actually
+        // guarantees this never renders in Release, independent of that ViewModel state.
+        if (BuildConfig.DEBUG && diagnosticsOverlayEnabled) {
+            DiagnosticsOverlay(
+                info = diagnosticsOverlayInfo,
+                aspectRatio = uiState.captureAspectRatio,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(16.dp),
+            )
+        }
     }
 }
 
@@ -242,28 +292,82 @@ private fun GrantedCameraContent(
  * gesture surface without a real drag also completing as a tap. Movement in any direction past
  * touch slop counts as "dragging" (cancelling the tap, matching plain tap-gesture semantics), but
  * only the horizontal component is reported to [onDrag].
+ *
+ * Independently of that existing tap/drag behavior, every touch interaction is also classified and
+ * reported through [onGestureEvent] for diagnostics (see "Gesture Processing"/"Gesture Events" in
+ * app-spec.md) - a drag that never exceeds [SWIPE_THRESHOLD_DP] is still handled exactly as before
+ * (whichever side of the midpoint it settles on), it is just additionally labelled
+ * [GestureClassification.MOVEMENT_BELOW_SWIPE_THRESHOLD] rather than [GestureClassification.SWIPE_LEFT]/
+ * [GestureClassification.SWIPE_RIGHT] in the diagnostic log.
  */
 private suspend fun PointerInputScope.detectTapOrHorizontalSwipe(
     onTap: () -> Unit,
     onDrag: (deltaX: Float) -> Unit,
     onDragEnd: () -> Unit,
+    overlayVisible: Boolean,
+    cameraAcceptingCaptureRequests: Boolean,
+    onGestureEvent: (GestureDiagnosticEvent) -> Unit,
 ) {
+    val swipeThresholdPx = with(this) { SWIPE_THRESHOLD_DP.dp.toPx() }
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false)
+        val downTimeMillis = System.currentTimeMillis()
+        var pointerEventConsumed = down.isConsumed
+        onGestureEvent(GestureDiagnosticEvent.Detected(downTimeMillis, down.position.x, down.position.y))
         var isDragging = false
         var totalDeltaX = 0f
         var totalDeltaY = 0f
         while (true) {
             val event = awaitPointerEvent()
-            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+            val change = event.changes.firstOrNull { it.id == down.id }
+            if (change == null) {
+                onGestureEvent(
+                    GestureDiagnosticEvent.Cancelled(
+                        timestampMillis = System.currentTimeMillis(),
+                        reason = GestureCancellationReason.GESTURE_CANCELLED,
+                        pointerEventConsumed = pointerEventConsumed,
+                        cancelledBeforeCompletion = true,
+                        uiComponent = GESTURE_SURFACE_COMPONENT_NAME,
+                        overlayVisible = overlayVisible,
+                        touchCaptureEnabled = true,
+                        cameraAcceptingCaptureRequests = cameraAcceptingCaptureRequests,
+                    ),
+                )
+                break
+            }
+            if (change.isConsumed) pointerEventConsumed = true
             if (change.changedToUpIgnoreConsumed()) {
+                val nowMillis = System.currentTimeMillis()
+                val classification = when {
+                    !isDragging -> GestureClassification.TAP
+                    abs(totalDeltaX) < swipeThresholdPx -> GestureClassification.MOVEMENT_BELOW_SWIPE_THRESHOLD
+                    totalDeltaX < 0 -> GestureClassification.SWIPE_LEFT
+                    else -> GestureClassification.SWIPE_RIGHT
+                }
+                onGestureEvent(
+                    GestureDiagnosticEvent.Classified(
+                        timestampMillis = nowMillis,
+                        downX = down.position.x,
+                        downY = down.position.y,
+                        upX = change.position.x,
+                        upY = change.position.y,
+                        durationMillis = nowMillis - downTimeMillis,
+                        totalDeltaX = totalDeltaX,
+                        totalDeltaY = totalDeltaY,
+                        totalDistance = sqrt(totalDeltaX * totalDeltaX + totalDeltaY * totalDeltaY),
+                        touchSlopPx = viewConfiguration.touchSlop,
+                        swipeThresholdPx = swipeThresholdPx,
+                        classification = classification,
+                    ),
+                )
+                onGestureEvent(GestureDiagnosticEvent.Accepted(nowMillis, classification))
                 if (isDragging) onDragEnd() else onTap()
                 break
             }
             val delta = change.positionChange()
+            totalDeltaX += delta.x
+            totalDeltaY += delta.y
             if (!isDragging) {
-                totalDeltaX += delta.x
-                totalDeltaY += delta.y
                 val totalDistance = sqrt(totalDeltaX * totalDeltaX + totalDeltaY * totalDeltaY)
                 if (totalDistance > viewConfiguration.touchSlop) isDragging = true
             }
@@ -275,7 +379,37 @@ private suspend fun PointerInputScope.detectTapOrHorizontalSwipe(
     }
 }
 
+/** Identifies which UI layer produced a [GestureDiagnosticEvent.Cancelled] (see "Gesture Cancellation Diagnostics" in app-spec.md). */
+private const val GESTURE_SURFACE_COMPONENT_NAME = "CameraScreen.fullScreenGestureSurface"
+
+/** Diagnostic-only threshold distinct from the system touch-slop: doesn't change swipe-to-toggle-overlay behavior, only its classification label. */
+private const val SWIPE_THRESHOLD_DP = 32
+
 private const val OVERLAY_ANIMATION_DURATION_MILLIS = 200
+
+@Composable
+private fun DiagnosticsOverlay(info: DiagnosticsOverlayInfo, aspectRatio: CaptureAspectRatio, modifier: Modifier = Modifier) {
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.7f)),
+    ) {
+        Column(modifier = Modifier.padding(8.dp)) {
+            Text("Aspect ratio: ${aspectRatio.name}", color = Color.White)
+            Text("Capture state: ${info.captureState}", color = Color.White)
+            Text("Camera bound: ${info.cameraBound}", color = Color.White)
+            Text("Last gesture: ${info.lastGestureClassification ?: "-"}", color = Color.White)
+            val touch = info.lastTouchLocation
+            Text(
+                text = "Touch: ${if (touch != null) "${touch.first.roundToInt()},${touch.second.roundToInt()}" else "-"}",
+                color = Color.White,
+            )
+            Text("Attempt id: ${info.lastCaptureAttemptId?.value?.take(ATTEMPT_ID_DISPLAY_LENGTH) ?: "-"}", color = Color.White)
+            Text("Trigger: ${info.lastCaptureTriggerSource ?: "-"}", color = Color.White)
+        }
+    }
+}
+
+private const val ATTEMPT_ID_DISPLAY_LENGTH = 8
 
 @Composable
 private fun CaptureStatusIndicator(status: CaptureStatusUi, modifier: Modifier = Modifier) {

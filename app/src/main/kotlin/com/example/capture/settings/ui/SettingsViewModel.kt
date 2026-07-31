@@ -73,6 +73,10 @@ class SettingsViewModel @Inject constructor(
         applicationScope.launch { settingsRepository.setCaptureAspectRatio(ratio) }
     }
 
+    fun onDiagnosticsFileLoggingChanged(enabled: Boolean) {
+        applicationScope.launch { settingsRepository.setDiagnosticsFileLoggingEnabled(enabled) }
+    }
+
     private companion object {
         const val STOP_TIMEOUT_MILLIS = 5_000L
         const val TAG = "SettingsViewModel"
@@ -85,4 +89,5 @@ private fun AppSettings.toUiState() = SettingsUiState(
     captureMode = captureMode,
     burstIntervalMillis = burstIntervalMillis,
     captureAspectRatio = captureAspectRatio,
+    diagnosticsFileLoggingEnabled = diagnosticsFileLoggingEnabled,
 )

@@ -47,6 +47,8 @@ fun CameraRoute(
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val diagnosticsOverlayEnabled by viewModel.diagnosticsOverlayEnabled.collectAsStateWithLifecycle()
+    val diagnosticsOverlayInfo by viewModel.diagnosticsOverlayInfo.collectAsStateWithLifecycle()
 
     var hasRequestedCameraPermission by rememberSaveable { mutableStateOf(false) }
     var hasRequestedMicrophonePermission by rememberSaveable { mutableStateOf(false) }
@@ -143,6 +145,10 @@ fun CameraRoute(
         onOpenSystemSettings = { context.startActivity(appSettingsIntent(context)) },
         onOpenSettings = onOpenSettings,
         modifier = modifier,
+        onGestureDiagnosticEvent = viewModel::onGestureDiagnosticEvent,
+        diagnosticsOverlayEnabled = diagnosticsOverlayEnabled,
+        diagnosticsOverlayInfo = diagnosticsOverlayInfo,
+        onDiagnosticsOverlayToggled = viewModel::onDiagnosticsOverlayToggled,
         cameraPreview = { previewModifier ->
             CameraPreview(
                 captureMode = uiState.captureMode,
@@ -150,6 +156,7 @@ fun CameraRoute(
                 modifier = previewModifier,
                 onImageCaptureReady = viewModel::attachImageCapture,
                 onCameraReady = viewModel::attachCamera,
+                onCameraDiagnostics = viewModel::onCameraDiagnostics,
             )
         },
     )

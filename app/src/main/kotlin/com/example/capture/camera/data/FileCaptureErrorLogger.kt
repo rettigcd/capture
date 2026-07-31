@@ -37,6 +37,7 @@ class FileCaptureErrorLogger @Inject constructor(
 
     private fun CaptureErrorLogEntry.toJsonLine(): String = JSONObject().apply {
         put("timestampMillis", timestampMillis)
+        put("captureAttemptId", captureAttemptId)
         put("captureMode", captureMode.name)
         put("burstImageNumber", burstImageNumber ?: JSONObject.NULL)
         put("burstIntervalMillis", burstIntervalMillis ?: JSONObject.NULL)

@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.capture.camera.domain.CameraDiagnosticsSnapshot
 import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
 
@@ -57,6 +58,7 @@ fun CameraPreview(
     modifier: Modifier = Modifier,
     onImageCaptureReady: (ImageCapture?) -> Unit,
     onCameraReady: (Camera?) -> Unit,
+    onCameraDiagnostics: (CameraDiagnosticsSnapshot) -> Unit = {},
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -114,6 +116,7 @@ fun CameraPreview(
         val camera = cameraProvider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, useCaseGroup)
         onImageCaptureReady(imageCaptureUseCase)
         onCameraReady(camera)
+        onCameraDiagnostics(cameraDiagnosticsSnapshot(previewUseCase, imageCaptureUseCase, captureAspectRatio, rotation, captureMode))
     }
 
     // Keeps target rotation (and thus capture/EXIF orientation) in sync with how the device is
@@ -126,8 +129,10 @@ fun CameraPreview(
             override fun onOrientationChanged(orientationDegrees: Int) {
                 if (orientationDegrees == ORIENTATION_UNKNOWN) return
                 val rotation = surfaceRotationFor(orientationDegrees)
+                if (rotation == previewUseCase.targetRotation) return
                 previewUseCase.targetRotation = rotation
                 imageCaptureUseCase.targetRotation = rotation
+                onCameraDiagnostics(cameraDiagnosticsSnapshot(previewUseCase, imageCaptureUseCase, captureAspectRatio, rotation, captureMode))
             }
         }
     }
@@ -163,3 +168,25 @@ internal fun surfaceRotationFor(orientationDegrees: Int): Int = when (orientatio
     in 225 until 315 -> Surface.ROTATION_90
     else -> Surface.ROTATION_0
 }
+
+/**
+ * The app always binds the single back camera (see [CameraSelector.DEFAULT_BACK_CAMERA] above -
+ * there is no camera-switching feature), so [CameraDiagnosticsSnapshot.selectedCamera] is a fixed
+ * label rather than something read off the bound [androidx.camera.core.Camera]. Resolutions come
+ * from each use case's own `resolutionInfo`, which CameraX populates as soon as binding completes.
+ */
+private fun cameraDiagnosticsSnapshot(
+    previewUseCase: Preview,
+    imageCaptureUseCase: ImageCapture,
+    captureAspectRatio: CaptureAspectRatio,
+    displayRotation: Int,
+    captureMode: CaptureMode,
+): CameraDiagnosticsSnapshot = CameraDiagnosticsSnapshot(
+    timestampMillis = System.currentTimeMillis(),
+    selectedCamera = "DEFAULT_BACK_CAMERA",
+    previewResolutionPx = previewUseCase.resolutionInfo?.resolution?.let { "${it.width}x${it.height}" },
+    captureResolutionPx = imageCaptureUseCase.resolutionInfo?.resolution?.let { "${it.width}x${it.height}" },
+    requestedAspectRatio = captureAspectRatio,
+    displayRotation = displayRotation,
+    captureMode = captureMode,
+)

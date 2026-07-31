@@ -196,6 +196,21 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun `changing diagnostics file logging updates state and is persisted`() = runTest {
+        val repository = FakeSettingsRepository()
+        val vm = buildViewModel(repository)
+        val collectJob = launch { vm.uiState.collect {} }
+
+        vm.onDiagnosticsFileLoggingChanged(true)
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.diagnosticsFileLoggingEnabled).isTrue()
+        assertThat(repository.settings.value.diagnosticsFileLoggingEnabled).isTrue()
+
+        collectJob.cancel()
+    }
+
+    @Test
     fun `a selection write survives the view model being cleared right afterward`() = runTest {
         // Regression test for a real bug: SettingsViewModel is scoped to the "settings"
         // NavBackStackEntry, which is popped (clearing the ViewModel and cancelling

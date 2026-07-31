@@ -2,6 +2,8 @@ package com.example.capture.camera.domain
 
 import app.cash.turbine.test
 import com.example.capture.testing.FakeCameraCaptureController
+import com.example.capture.testing.FakeCaptureAttemptIdGenerator
+import com.example.capture.testing.FakeCaptureDiagnosticsLogger
 import com.example.capture.testing.FakeCaptureErrorLogger
 import com.example.capture.testing.FakeCaptureMetadataLogger
 import com.example.capture.testing.FakeImageMetadataReader
@@ -27,6 +29,8 @@ class CaptureCoordinatorTest {
         errorLogger: FakeCaptureErrorLogger = FakeCaptureErrorLogger(),
         imageMetadataReader: FakeImageMetadataReader = FakeImageMetadataReader(),
         metadataLogger: FakeCaptureMetadataLogger = FakeCaptureMetadataLogger(),
+        attemptIdGenerator: FakeCaptureAttemptIdGenerator = FakeCaptureAttemptIdGenerator(),
+        diagnosticsLogger: FakeCaptureDiagnosticsLogger = FakeCaptureDiagnosticsLogger(),
         testScheduler: kotlinx.coroutines.test.TestCoroutineScheduler,
     ): CaptureCoordinator {
         val dispatcher = StandardTestDispatcher(testScheduler)
@@ -38,6 +42,8 @@ class CaptureCoordinatorTest {
             errorLogger,
             imageMetadataReader,
             metadataLogger,
+            attemptIdGenerator,
+            diagnosticsLogger,
         )
     }
 
@@ -328,5 +334,76 @@ class CaptureCoordinatorTest {
         sut.requestCapture(CaptureTrigger.ScreenTouch, CaptureMode.BURST, burstIntervalMillis = 250L)
 
         assertThat(metadataLogger.loggedEntries).hasSize(BURST_IMAGE_COUNT)
+    }
+
+    @Test
+    fun `every diagnostic event for a single-shot capture shares the same attempt id`() = runTest {
+        val camera = FakeCameraCaptureController()
+        val diagnosticsLogger = FakeCaptureDiagnosticsLogger()
+        val sut = buildCoordinator(camera, diagnosticsLogger = diagnosticsLogger, testScheduler = testScheduler)
+
+        sut.requestCapture(CaptureTrigger.ScreenTouch)
+
+        val attemptIds = diagnosticsLogger.loggedEvents.map { it.attemptId }.distinct()
+        assertThat(attemptIds).hasSize(1)
+        assertThat(
+            diagnosticsLogger.loggedEvents.map { it::class.simpleName },
+        ).containsExactly("Requested", "Accepted", "CameraXRequestSubmitted", "ImageSaved", "Completed").inOrder()
+    }
+
+    @Test
+    fun `a burst shares one attempt id across all of its images`() = runTest {
+        val camera = FakeCameraCaptureController()
+        val diagnosticsLogger = FakeCaptureDiagnosticsLogger()
+        val sut = buildCoordinator(camera, diagnosticsLogger = diagnosticsLogger, testScheduler = testScheduler)
+
+        sut.requestCapture(CaptureTrigger.ScreenTouch, CaptureMode.BURST, burstIntervalMillis = 250L)
+
+        val attemptIds = diagnosticsLogger.loggedEvents.map { it.attemptId }.distinct()
+        assertThat(attemptIds).hasSize(1)
+        val submitted = diagnosticsLogger.loggedEvents.filterIsInstance<CaptureDiagnosticEvent.CameraXRequestSubmitted>()
+        assertThat(submitted.map { it.burstImageNumber }).containsExactly(1, 2, 3, 4).inOrder()
+    }
+
+    // Note: there is no dedicated test for the CAPTURE_ALREADY_RUNNING reason (the sibling branch
+    // to BURST_ALREADY_RUNNING below, in the same two-line `if` in requestCapture) - with these
+    // fakes, a Single-Shot capture has no real suspension point, so two concurrent single-shot
+    // requests never actually overlap in this test environment; only the Burst path's genuine
+    // delay() gives the interleaving needed to prove mutex contention deterministically.
+
+    @Test
+    fun `a capture command received while a burst is in flight is rejected as burst already running`() = runTest {
+        val camera = FakeCameraCaptureController()
+        val diagnosticsLogger = FakeCaptureDiagnosticsLogger()
+        val sut = buildCoordinator(camera, diagnosticsLogger = diagnosticsLogger, testScheduler = testScheduler)
+
+        val burstJob = launch {
+            sut.requestCapture(CaptureTrigger.ScreenTouch, CaptureMode.BURST, burstIntervalMillis = 500L)
+        }
+        val overlappingJob = launch { sut.requestCapture(CaptureTrigger.VolumeUp) }
+        advanceUntilIdle()
+        burstJob.join()
+        overlappingJob.join()
+
+        val rejected = diagnosticsLogger.loggedEvents.filterIsInstance<CaptureDiagnosticEvent.Rejected>().single()
+        assertThat(rejected.reason).isEqualTo(CaptureRejectionReason.BURST_ALREADY_RUNNING)
+    }
+
+    @Test
+    fun `every completed capture result carries the attempt id its diagnostic events share`() = runTest {
+        val camera = FakeCameraCaptureController()
+        val attemptIdGenerator = FakeCaptureAttemptIdGenerator()
+        val diagnosticsLogger = FakeCaptureDiagnosticsLogger()
+        val sut = buildCoordinator(
+            camera,
+            attemptIdGenerator = attemptIdGenerator,
+            diagnosticsLogger = diagnosticsLogger,
+            testScheduler = testScheduler,
+        )
+
+        sut.requestCapture(CaptureTrigger.ScreenTouch)
+
+        val completed = sut.state.value as CaptureState.Completed
+        assertThat(completed.result.attemptId).isEqualTo(diagnosticsLogger.loggedEvents.first().attemptId)
     }
 }

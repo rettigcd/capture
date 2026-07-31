@@ -5,13 +5,19 @@ import com.example.capture.camera.data.ImageCaptureUseCaseHolder
 import com.example.capture.camera.domain.CameraCaptureOutcome
 import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureCoordinator
+import com.example.capture.camera.domain.CaptureDiagnosticEvent
 import com.example.capture.camera.domain.CaptureMode
+import com.example.capture.camera.domain.CaptureTriggerSource
+import com.example.capture.camera.domain.GestureDiagnosticEvent
 import com.example.capture.permissions.PermissionStatus
 import com.example.capture.settings.domain.AppSettings
 import com.example.capture.testing.FakeCameraCaptureController
+import com.example.capture.testing.FakeCaptureAttemptIdGenerator
+import com.example.capture.testing.FakeCaptureDiagnosticsLogger
 import com.example.capture.testing.FakeCaptureErrorLogger
 import com.example.capture.testing.FakeCaptureMetadataLogger
 import com.example.capture.testing.FakeFlashTorchController
+import com.example.capture.testing.FakeGestureDiagnosticsLogger
 import com.example.capture.testing.FakeHapticFeedback
 import com.example.capture.testing.FakeImageMetadataReader
 import com.example.capture.testing.FakeOverlayVisibilityRepository
@@ -63,6 +69,9 @@ class CameraViewModelTest {
         errorLogger: FakeCaptureErrorLogger = FakeCaptureErrorLogger(),
         imageMetadataReader: FakeImageMetadataReader = FakeImageMetadataReader(),
         metadataLogger: FakeCaptureMetadataLogger = FakeCaptureMetadataLogger(),
+        attemptIdGenerator: FakeCaptureAttemptIdGenerator = FakeCaptureAttemptIdGenerator(),
+        captureDiagnosticsLogger: FakeCaptureDiagnosticsLogger = FakeCaptureDiagnosticsLogger(),
+        gestureDiagnosticsLogger: FakeGestureDiagnosticsLogger = FakeGestureDiagnosticsLogger(),
         scheduler: TestCoroutineScheduler,
     ): CameraViewModel {
         val dispatcher = StandardTestDispatcher(scheduler)
@@ -74,6 +83,8 @@ class CameraViewModelTest {
             errorLogger,
             imageMetadataReader,
             metadataLogger,
+            attemptIdGenerator,
+            captureDiagnosticsLogger,
         )
         val applicationScope = CoroutineScope(dispatcher)
         return CameraViewModel(
@@ -85,6 +96,8 @@ class CameraViewModelTest {
             settings,
             overlayVisibility,
             flashTorchController,
+            gestureDiagnosticsLogger,
+            captureDiagnosticsLogger,
             applicationScope,
         )
     }
@@ -447,5 +460,44 @@ class CameraViewModelTest {
         advanceUntilIdle()
 
         assertThat(voice.stopCount).isEqualTo(1)
+    }
+
+    @Test
+    fun `the shutter button and screen touch are distinguishable capture-diagnostic trigger sources`() = runTest {
+        val camera = FakeCameraCaptureController()
+        val diagnosticsLogger = FakeCaptureDiagnosticsLogger()
+        val vm = buildViewModel(camera = camera, captureDiagnosticsLogger = diagnosticsLogger, scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+
+        vm.onShutterButtonClick()
+        advanceUntilIdle()
+
+        val requested = diagnosticsLogger.loggedEvents.filterIsInstance<CaptureDiagnosticEvent.Requested>().single()
+        assertThat(requested.triggerSource).isEqualTo(CaptureTriggerSource.SHUTTER_BUTTON)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `a gesture diagnostic event is forwarded to the gesture diagnostics logger`() = runTest {
+        val gestureDiagnosticsLogger = FakeGestureDiagnosticsLogger()
+        val vm = buildViewModel(gestureDiagnosticsLogger = gestureDiagnosticsLogger, scheduler = testScheduler)
+
+        val event = GestureDiagnosticEvent.Detected(timestampMillis = 1_000L, downX = 10f, downY = 20f)
+        vm.onGestureDiagnosticEvent(event)
+
+        assertThat(gestureDiagnosticsLogger.loggedEvents).containsExactly(event)
+        assertThat(vm.diagnosticsOverlayInfo.value.lastTouchLocation).isEqualTo(10f to 20f)
+    }
+
+    @Test
+    fun `toggling the diagnostics overlay flips its enabled state`() = runTest {
+        val vm = buildViewModel(scheduler = testScheduler)
+
+        assertThat(vm.diagnosticsOverlayEnabled.value).isFalse()
+        vm.onDiagnosticsOverlayToggled()
+        assertThat(vm.diagnosticsOverlayEnabled.value).isTrue()
+        vm.onDiagnosticsOverlayToggled()
+        assertThat(vm.diagnosticsOverlayEnabled.value).isFalse()
     }
 }

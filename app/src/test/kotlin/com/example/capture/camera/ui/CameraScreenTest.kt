@@ -15,6 +15,8 @@ import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
 import androidx.test.core.app.ApplicationProvider
 import com.example.capture.R
+import com.example.capture.camera.domain.GestureClassification
+import com.example.capture.camera.domain.GestureDiagnosticEvent
 import com.example.capture.permissions.PermissionStatus
 import com.google.common.truth.Truth.assertThat
 import org.junit.Rule
@@ -46,6 +48,9 @@ class CameraScreenTest {
         onRequestCameraPermission: () -> Unit = {},
         onOpenSystemSettings: () -> Unit = {},
         onOpenSettings: () -> Unit = {},
+        onGestureDiagnosticEvent: (GestureDiagnosticEvent) -> Unit = {},
+        diagnosticsOverlayEnabled: Boolean = false,
+        onDiagnosticsOverlayToggled: () -> Unit = {},
     ) {
         composeTestRule.setContent {
             CameraScreen(
@@ -57,6 +62,9 @@ class CameraScreenTest {
                 onRequestCameraPermission = onRequestCameraPermission,
                 onOpenSystemSettings = onOpenSystemSettings,
                 onOpenSettings = onOpenSettings,
+                onGestureDiagnosticEvent = onGestureDiagnosticEvent,
+                diagnosticsOverlayEnabled = diagnosticsOverlayEnabled,
+                onDiagnosticsOverlayToggled = onDiagnosticsOverlayToggled,
             )
         }
     }
@@ -280,5 +288,62 @@ class CameraScreenTest {
 
         assertThat(committedVisible).isFalse()
         assertThat(touchCount).isEqualTo(0)
+    }
+
+    @Test
+    fun tappingThePreview_reportsATapGestureDiagnosticEvent() {
+        val events = mutableListOf<GestureDiagnosticEvent>()
+        setScreen(
+            CameraUiState(cameraPermission = PermissionStatus.GRANTED),
+            onGestureDiagnosticEvent = { events += it },
+        )
+
+        composeTestRule.onNodeWithContentDescription(
+            context.getString(R.string.camera_preview_content_description),
+        ).performTouchInput { click() }
+
+        assertThat(events.filterIsInstance<GestureDiagnosticEvent.Detected>()).hasSize(1)
+        val classified = events.filterIsInstance<GestureDiagnosticEvent.Classified>().single()
+        assertThat(classified.classification).isEqualTo(GestureClassification.TAP)
+        assertThat(events.filterIsInstance<GestureDiagnosticEvent.Accepted>().single().classification)
+            .isEqualTo(GestureClassification.TAP)
+    }
+
+    @Test
+    fun leftSwipeOnThePreview_reportsASwipeLeftGestureDiagnosticEvent() {
+        val events = mutableListOf<GestureDiagnosticEvent>()
+        setScreen(
+            CameraUiState(
+                cameraPermission = PermissionStatus.GRANTED,
+                overlayVisible = false,
+                overlayImageUriString = "content://fake/overlay",
+            ),
+            onGestureDiagnosticEvent = { events += it },
+        )
+
+        composeTestRule.onNodeWithContentDescription(
+            context.getString(R.string.camera_preview_content_description),
+        ).performTouchInput { swipeLeft() }
+
+        val classified = events.filterIsInstance<GestureDiagnosticEvent.Classified>().single()
+        assertThat(classified.classification).isEqualTo(GestureClassification.SWIPE_LEFT)
+    }
+
+    @Test
+    fun diagnosticsToggleButton_isShown_andInvokesCallback() {
+        // Only exercised under testDebugUnitTest, where BuildConfig.DEBUG is true - matching
+        // "Debug Overlay" in app-spec.md, this button (and the overlay it controls) must never
+        // render in a Release build, which is verified separately via the assembleRelease build.
+        var toggleCount = 0
+        setScreen(
+            CameraUiState(cameraPermission = PermissionStatus.GRANTED),
+            onDiagnosticsOverlayToggled = { toggleCount++ },
+        )
+
+        composeTestRule.onNodeWithContentDescription(
+            context.getString(R.string.diagnostics_overlay_toggle_content_description),
+        ).performClick()
+
+        assertThat(toggleCount).isEqualTo(1)
     }
 }

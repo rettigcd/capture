@@ -7,6 +7,7 @@ package com.example.capture.camera.domain
  */
 data class CaptureMetadataLogEntry(
     val timestampMillis: Long,
+    val captureAttemptId: String,
     val widthPx: Int,
     val heightPx: Int,
     val requestedAspectRatio: CaptureAspectRatio,

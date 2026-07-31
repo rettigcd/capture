@@ -33,6 +33,7 @@ class FileCaptureMetadataLogger @Inject constructor(
 
     private fun CaptureMetadataLogEntry.toJsonLine(): String = JSONObject().apply {
         put("timestampMillis", timestampMillis)
+        put("captureAttemptId", captureAttemptId)
         put("widthPx", widthPx)
         put("heightPx", heightPx)
         put("requestedAspectRatio", requestedAspectRatio.name)

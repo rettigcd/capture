@@ -14,7 +14,11 @@ data class PendingPhotoEntry(val uriString: String)
 /** Outcome of asking the camera hardware to expose and encode a single frame. */
 sealed interface CameraCaptureOutcome {
     data object Success : CameraCaptureOutcome
-    data class Failure(val message: String, val cause: Throwable? = null) : CameraCaptureOutcome
+    data class Failure(
+        val message: String,
+        val cause: Throwable? = null,
+        val reason: CaptureRejectionReason = CaptureRejectionReason.UNKNOWN,
+    ) : CameraCaptureOutcome
 }
 
 /** Outcome of a full capture request, after camera capture and MediaStore finalization. */
@@ -28,6 +32,7 @@ data class CaptureResult(
     val outcome: CaptureOutcome,
     val trigger: CaptureTrigger,
     val timestampMillis: Long,
+    val attemptId: CaptureAttemptId,
 )
 
 /**
@@ -42,7 +47,7 @@ const val BURST_IMAGE_COUNT = 4
 /** Coordinator-level state machine exposed to the UI layer. */
 sealed interface CaptureState {
     data object Idle : CaptureState
-    data class Capturing(val trigger: CaptureTrigger) : CaptureState
+    data class Capturing(val trigger: CaptureTrigger, val attemptId: CaptureAttemptId) : CaptureState
     data class Completed(val result: CaptureResult) : CaptureState
 
     /**
@@ -50,7 +55,7 @@ sealed interface CaptureState {
      * captured - so the UI/haptics can react to "a burst was started" independent of whether any
      * individual image in it eventually succeeds (see "Burst Feedback" in app-spec.md).
      */
-    data class BurstStarted(val trigger: CaptureTrigger) : CaptureState
+    data class BurstStarted(val trigger: CaptureTrigger, val attemptId: CaptureAttemptId) : CaptureState
 
     /** Emitted once all [BURST_IMAGE_COUNT] images have been attempted, in capture order. */
     data class BurstCompleted(val results: List<CaptureResult>, val trigger: CaptureTrigger) : CaptureState

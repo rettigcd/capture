@@ -17,4 +17,5 @@ interface SettingsRepository {
     suspend fun setCaptureMode(mode: CaptureMode)
     suspend fun setBurstIntervalMillis(intervalMillis: Long)
     suspend fun setCaptureAspectRatio(ratio: CaptureAspectRatio)
+    suspend fun setDiagnosticsFileLoggingEnabled(enabled: Boolean)
 }

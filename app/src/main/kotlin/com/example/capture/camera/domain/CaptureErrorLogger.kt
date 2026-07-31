@@ -8,6 +8,7 @@ package com.example.capture.camera.domain
  */
 data class CaptureErrorLogEntry(
     val timestampMillis: Long,
+    val captureAttemptId: String,
     val captureMode: CaptureMode,
     val burstImageNumber: Int?,
     val burstIntervalMillis: Long?,

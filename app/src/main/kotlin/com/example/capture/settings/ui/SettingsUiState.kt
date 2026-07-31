@@ -11,4 +11,5 @@ data class SettingsUiState(
     val captureMode: CaptureMode = CaptureMode.SINGLE_SHOT,
     val burstIntervalMillis: Long = AppSettings.DEFAULT_BURST_INTERVAL_MILLIS,
     val captureAspectRatio: CaptureAspectRatio = CaptureAspectRatio.RATIO_4_3,
+    val diagnosticsFileLoggingEnabled: Boolean = false,
 )

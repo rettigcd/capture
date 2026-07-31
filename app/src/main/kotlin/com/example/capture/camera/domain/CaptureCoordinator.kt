@@ -13,15 +13,23 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * The single place every [CaptureTrigger] - screen touch, either volume button, or a recognized
- * voice command - is turned into an actual photograph, whether that's one image (Single-Shot Mode)
- * or [BURST_IMAGE_COUNT] of them spaced by a configurable interval (Burst Mode). Nothing else in
- * the app is allowed to call [CameraCaptureController] or [PhotoStorage] directly; this keeps
- * capture behavior identical regardless of which input produced the trigger.
+ * The single place every [CaptureTrigger] - screen touch, shutter button, either volume button, or
+ * a recognized voice command - is turned into an actual photograph, whether that's one image
+ * (Single-Shot Mode) or [BURST_IMAGE_COUNT] of them spaced by a configurable interval (Burst Mode).
+ * Nothing else in the app is allowed to call [CameraCaptureController] or [PhotoStorage] directly;
+ * this keeps capture behavior identical regardless of which input produced the trigger.
+ *
+ * Every call to [requestCapture] gets its own [CaptureAttemptId], generated before any validation
+ * happens, and every diagnostic event that request produces - accepted, rejected, or any stage of
+ * an in-flight capture - carries that same id (see "Capture Request Processing" / "Diagnostic
+ * Correlation" in app-spec.md). A whole burst shares one id: it is one capture *attempt* that
+ * happens to produce several images, each individually distinguished by
+ * [CaptureDiagnosticEvent.CameraXRequestSubmitted.burstImageNumber].
  *
  * Deliberately has no Android or Compose imports so it can be constructed and driven from a plain
  * JUnit test with fakes for [CameraCaptureController], [PhotoStorage], [CaptureErrorLogger],
- * [ImageMetadataReader], and [CaptureMetadataLogger].
+ * [ImageMetadataReader], [CaptureMetadataLogger], [CaptureAttemptIdGenerator], and
+ * [CaptureDiagnosticsLogger].
  */
 @Singleton
 class CaptureCoordinator @Inject constructor(
@@ -32,6 +40,8 @@ class CaptureCoordinator @Inject constructor(
     private val errorLogger: CaptureErrorLogger,
     private val imageMetadataReader: ImageMetadataReader,
     private val metadataLogger: CaptureMetadataLogger,
+    private val captureAttemptIdGenerator: CaptureAttemptIdGenerator,
+    private val diagnosticsLogger: CaptureDiagnosticsLogger,
 ) {
     private val mutex = Mutex()
 
@@ -40,6 +50,10 @@ class CaptureCoordinator @Inject constructor(
 
     @Volatile
     private var lastAcceptedAtMillis: Long? = null
+
+    /** Which [CaptureMode] currently holds [mutex], so a busy rejection can report the right [CaptureRejectionReason]. */
+    @Volatile
+    private var activeCaptureMode: CaptureMode? = null
 
     /**
      * Requests a capture for [trigger]. [mutex.tryLock] (rather than a blocking `lock`) is used so
@@ -58,19 +72,45 @@ class CaptureCoordinator @Inject constructor(
         captureAspectRatio: CaptureAspectRatio = CaptureAspectRatio.RATIO_4_3,
     ) {
         withContext(dispatcherProvider.default) {
-            if (!mutex.tryLock()) return@withContext
+            val attemptId = captureAttemptIdGenerator.generate()
+            diagnosticsLogger.logEvent(
+                CaptureDiagnosticEvent.Requested(
+                    attemptId,
+                    timeProvider.currentTimeMillis(),
+                    trigger.toDiagnosticSource(),
+                    captureMode,
+                    captureAspectRatio,
+                ),
+            )
+            if (!mutex.tryLock()) {
+                val reason = if (activeCaptureMode == CaptureMode.BURST) {
+                    CaptureRejectionReason.BURST_ALREADY_RUNNING
+                } else {
+                    CaptureRejectionReason.CAPTURE_ALREADY_RUNNING
+                }
+                diagnosticsLogger.logEvent(
+                    CaptureDiagnosticEvent.Rejected(attemptId, timeProvider.currentTimeMillis(), reason),
+                )
+                return@withContext
+            }
             try {
+                activeCaptureMode = captureMode
                 val now = timeProvider.currentTimeMillis()
                 val last = lastAcceptedAtMillis
                 if (last != null && now - last < MIN_INTERVAL_MILLIS) {
+                    diagnosticsLogger.logEvent(
+                        CaptureDiagnosticEvent.Rejected(attemptId, now, CaptureRejectionReason.UNKNOWN),
+                    )
                     return@withContext
                 }
                 lastAcceptedAtMillis = now
+                diagnosticsLogger.logEvent(CaptureDiagnosticEvent.Accepted(attemptId, now))
                 when (captureMode) {
-                    CaptureMode.SINGLE_SHOT -> performSingleShot(trigger, now, captureAspectRatio)
-                    CaptureMode.BURST -> performBurst(trigger, burstIntervalMillis, captureAspectRatio)
+                    CaptureMode.SINGLE_SHOT -> performSingleShot(trigger, now, captureAspectRatio, attemptId)
+                    CaptureMode.BURST -> performBurst(trigger, burstIntervalMillis, captureAspectRatio, attemptId)
                 }
             } finally {
+                activeCaptureMode = null
                 mutex.unlock()
             }
         }
@@ -80,10 +120,15 @@ class CaptureCoordinator @Inject constructor(
         trigger: CaptureTrigger,
         timestampMillis: Long,
         captureAspectRatio: CaptureAspectRatio,
+        attemptId: CaptureAttemptId,
     ) {
-        _state.value = CaptureState.Capturing(trigger)
-        val context = CaptureContext(CaptureMode.SINGLE_SHOT, burstImageNumber = null, burstIntervalMillis = null, captureAspectRatio)
-        _state.value = CaptureState.Completed(performCapture(trigger, timestampMillis, context))
+        _state.value = CaptureState.Capturing(trigger, attemptId)
+        val context = CaptureContext(CaptureMode.SINGLE_SHOT, burstImageNumber = null, burstIntervalMillis = null, captureAspectRatio, attemptId)
+        val result = performCapture(trigger, timestampMillis, context)
+        diagnosticsLogger.logEvent(
+            CaptureDiagnosticEvent.Completed(attemptId, timeProvider.currentTimeMillis(), result.outcome is CaptureOutcome.Success),
+        )
+        _state.value = CaptureState.Completed(result)
     }
 
     /**
@@ -95,15 +140,27 @@ class CaptureCoordinator @Inject constructor(
      * becomes impossible would require throwing, which [performCapture] does not do for ordinary
      * per-image failures.
      */
-    private suspend fun performBurst(trigger: CaptureTrigger, burstIntervalMillis: Long, captureAspectRatio: CaptureAspectRatio) {
-        _state.value = CaptureState.BurstStarted(trigger)
+    private suspend fun performBurst(
+        trigger: CaptureTrigger,
+        burstIntervalMillis: Long,
+        captureAspectRatio: CaptureAspectRatio,
+        attemptId: CaptureAttemptId,
+    ) {
+        _state.value = CaptureState.BurstStarted(trigger, attemptId)
         val results = mutableListOf<CaptureResult>()
         for (imageNumber in 1..BURST_IMAGE_COUNT) {
             val timestampMillis = timeProvider.currentTimeMillis()
-            val context = CaptureContext(CaptureMode.BURST, imageNumber, burstIntervalMillis, captureAspectRatio)
+            val context = CaptureContext(CaptureMode.BURST, imageNumber, burstIntervalMillis, captureAspectRatio, attemptId)
             results += performCapture(trigger, timestampMillis, context)
             if (imageNumber < BURST_IMAGE_COUNT) delay(burstIntervalMillis)
         }
+        diagnosticsLogger.logEvent(
+            CaptureDiagnosticEvent.Completed(
+                attemptId,
+                timeProvider.currentTimeMillis(),
+                results.any { it.outcome is CaptureOutcome.Success },
+            ),
+        )
         _state.value = CaptureState.BurstCompleted(results, trigger)
     }
 
@@ -113,9 +170,12 @@ class CaptureCoordinator @Inject constructor(
         context: CaptureContext,
     ): CaptureResult {
         val entry = createEntryOrNull(timestampMillis, context)
-            ?: return CaptureResult(CaptureOutcome.Failure(GENERIC_STORAGE_ERROR), trigger, timestampMillis)
+            ?: return CaptureResult(CaptureOutcome.Failure(GENERIC_STORAGE_ERROR), trigger, timestampMillis, context.attemptId)
 
-        return when (val outcome = cameraCaptureController.captureTo(entry)) {
+        diagnosticsLogger.logEvent(
+            CaptureDiagnosticEvent.CameraXRequestSubmitted(context.attemptId, timeProvider.currentTimeMillis(), context.burstImageNumber),
+        )
+        return when (val outcome = cameraCaptureController.captureTo(entry, context.attemptId)) {
             is CameraCaptureOutcome.Success -> {
                 val result = finishSuccessfulCapture(entry, trigger, timestampMillis, context)
                 val successOutcome = result.outcome
@@ -127,7 +187,7 @@ class CaptureCoordinator @Inject constructor(
             is CameraCaptureOutcome.Failure -> {
                 photoStorage.discardEntry(entry)
                 logError(timestampMillis, context, entry.uriString, "CameraCaptureFailure", outcome.message, outcome.cause)
-                CaptureResult(CaptureOutcome.Failure(outcome.message), trigger, timestampMillis)
+                CaptureResult(CaptureOutcome.Failure(outcome.message), trigger, timestampMillis, context.attemptId)
             }
         }
     }
@@ -145,9 +205,12 @@ class CaptureCoordinator @Inject constructor(
         } catch (error: Exception) {
             photoStorage.discardEntry(entry)
             logError(timestampMillis, context, entry.uriString, "StorageFinalizeFailure", GENERIC_STORAGE_ERROR, error)
-            return CaptureResult(CaptureOutcome.Failure(GENERIC_STORAGE_ERROR), trigger, timestampMillis)
+            return CaptureResult(CaptureOutcome.Failure(GENERIC_STORAGE_ERROR), trigger, timestampMillis, context.attemptId)
         }
-        return CaptureResult(CaptureOutcome.Success(uriString), trigger, timestampMillis)
+        diagnosticsLogger.logEvent(
+            CaptureDiagnosticEvent.ImageSaved(context.attemptId, timeProvider.currentTimeMillis(), uriString),
+        )
+        return CaptureResult(CaptureOutcome.Success(uriString), trigger, timestampMillis, context.attemptId)
     }
 
     private suspend fun createEntryOrNull(timestampMillis: Long, context: CaptureContext): PendingPhotoEntry? = try {
@@ -170,6 +233,7 @@ class CaptureCoordinator @Inject constructor(
         errorLogger.log(
             CaptureErrorLogEntry(
                 timestampMillis = timestampMillis,
+                captureAttemptId = context.attemptId.value,
                 captureMode = context.captureMode,
                 burstImageNumber = context.burstImageNumber,
                 burstIntervalMillis = context.burstIntervalMillis,
@@ -193,6 +257,7 @@ class CaptureCoordinator @Inject constructor(
         metadataLogger.log(
             CaptureMetadataLogEntry(
                 timestampMillis = timestampMillis,
+                captureAttemptId = context.attemptId.value,
                 widthPx = metadata.widthPx,
                 heightPx = metadata.heightPx,
                 requestedAspectRatio = context.captureAspectRatio,
@@ -204,12 +269,13 @@ class CaptureCoordinator @Inject constructor(
         )
     }
 
-    /** Just the per-capture metadata [logError]/[logMetadata] need; not part of the public API. */
+    /** Just the per-capture metadata [logError]/[logMetadata]/diagnostics need; not part of the public API. */
     private data class CaptureContext(
         val captureMode: CaptureMode,
         val burstImageNumber: Int?,
         val burstIntervalMillis: Long?,
         val captureAspectRatio: CaptureAspectRatio,
+        val attemptId: CaptureAttemptId,
     )
 
     companion object {

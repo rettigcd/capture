@@ -21,6 +21,7 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -50,6 +51,7 @@ fun SettingsScreen(
     onCaptureModeChanged: (CaptureMode) -> Unit,
     onBurstIntervalChanged: (Long) -> Unit,
     onCaptureAspectRatioChanged: (CaptureAspectRatio) -> Unit,
+    onDiagnosticsFileLoggingChanged: (Boolean) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -100,6 +102,11 @@ fun SettingsScreen(
             CaptureAspectRatioSetting(
                 aspectRatio = uiState.captureAspectRatio,
                 onAspectRatioChanged = onCaptureAspectRatioChanged,
+            )
+            HorizontalDivider()
+            DiagnosticsFileLoggingSetting(
+                enabled = uiState.diagnosticsFileLoggingEnabled,
+                onEnabledChanged = onDiagnosticsFileLoggingChanged,
             )
         }
     }
@@ -208,5 +215,18 @@ private fun CaptureAspectRatioSetting(
                 Text(stringResource(R.string.settings_aspect_ratio_16_9))
             }
         }
+    }
+}
+
+/**
+ * Off by default (see "Diagnostic Persistence" in app-spec.md). Logcat output for capture
+ * diagnostics is unaffected by this toggle - it only controls the additional
+ * `capture_diagnostics.log` file used for post-analysis.
+ */
+@Composable
+private fun DiagnosticsFileLoggingSetting(enabled: Boolean, onEnabledChanged: (Boolean) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.settings_diagnostics_file_logging_label))
+        Switch(checked = enabled, onCheckedChange = onEnabledChanged)
     }
 }

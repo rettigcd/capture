@@ -45,6 +45,8 @@ flowchart TD
         FlashIface[[FlashTorchController]]
         MetadataLogIface[[CaptureMetadataLogger]]
         MetadataReadIface[[ImageMetadataReader]]
+        CaptureDiagIface[[CaptureDiagnosticsLogger]]
+        GestureDiagIface[[GestureDiagnosticsLogger]]
     end
 
     subgraph CameraData["camera.data"]
@@ -57,6 +59,7 @@ flowchart TD
         FlashImpl[CameraXFlashTorchController]
         MetadataLogImpl[FileCaptureMetadataLogger]
         MetadataReadImpl[AndroidImageMetadataReader]
+        DiagLogImpl[AndroidDiagnosticsLogger]
     end
 
     subgraph Voice["voice"]
@@ -78,18 +81,24 @@ flowchart TD
     Route --> Screen
     Route --> VM
     Screen -->|touch / shutter tap| VM
+    Screen -->|gesture diagnostic events| VM
     Screen -->|gear icon| Nav
     Preview -->|attaches ImageCapture use case| VM
+    Preview -->|camera diagnostics snapshot| VM
     VM --> Coordinator
     VM --> SettingsIface
     VM --> HapticIface
     VM --> OverlayIface
     VM --> FlashIface
+    VM --> GestureDiagIface
+    VM --> CaptureDiagIface
     Coordinator --> CamIface
     Coordinator --> StorageIface
     Coordinator --> ErrorLogIface
     Coordinator --> MetadataLogIface
     Coordinator --> MetadataReadIface
+    Coordinator --> CaptureDiagIface
+    CamX --> CaptureDiagIface
     CamIface -.implemented by.-> CamX
     StorageIface -.implemented by.-> MediaStoreImpl
     HapticIface -.implemented by.-> HapticImpl
@@ -98,6 +107,8 @@ flowchart TD
     FlashIface -.implemented by.-> FlashImpl
     MetadataLogIface -.implemented by.-> MetadataLogImpl
     MetadataReadIface -.implemented by.-> MetadataReadImpl
+    CaptureDiagIface -.implemented by.-> DiagLogImpl
+    GestureDiagIface -.implemented by.-> DiagLogImpl
     OverlayImpl --> DataStore
     FlashImpl --> Holder
     CamX --> Holder
@@ -136,19 +147,23 @@ com.example.capture
 │   ├── domain/                   CaptureTrigger, CaptureCoordinator, CaptureModels (incl.
 │   │                             CaptureMode, CaptureState.BurstStarted/BurstCompleted),
 │   │                             CaptureAspectRatio, AspectRatioClassifier, CaptureErrorLogger,
-│   │                             CaptureMetadataLogger, ImageMetadataReader, the
+│   │                             CaptureMetadataLogger, ImageMetadataReader, CaptureAttemptId(Generator),
+│   │                             CaptureDiagnosticEvent/CameraDiagnosticsSnapshot/CaptureDiagnosticsLogger,
+│   │                             GestureDiagnosticEvent/GestureDiagnosticsLogger, the
 │   │                             CameraCaptureController / PhotoStorage / HapticFeedback /
 │   │                             OverlayVisibilityRepository / FlashTorchController interfaces
 │   ├── data/                     CameraXCaptureController, MediaStorePhotoStorage,
 │   │                             ImageCaptureUseCaseHolder, CameraControlHolder,
 │   │                             AndroidHapticFeedback, DataStoreOverlayVisibilityRepository,
 │   │                             FileCaptureErrorLogger, CameraXFlashTorchController,
-│   │                             FileCaptureMetadataLogger, AndroidImageMetadataReader - the only
-│   │                             CameraX/MediaStore/Vibrator/DataStore/file-logging/EXIF code
-│   └── ui/                       CameraViewModel, CameraUiState, CameraScreen (stateless,
-│                                 including the swipe-gesture overlay logic and the
-│                                 aspect-ratio-constrained preview layout),
-│                                 CameraRoute (permissions + Hilt wiring), CameraPreview
+│   │                             FileCaptureMetadataLogger, AndroidImageMetadataReader,
+│   │                             AndroidDiagnosticsLogger - the only
+│   │                             CameraX/MediaStore/Vibrator/DataStore/file-logging/EXIF/Logcat code
+│   └── ui/                       CameraViewModel, CameraUiState, DiagnosticsOverlayInfo,
+│                                 CameraScreen (stateless, including the swipe-gesture overlay
+│                                 logic, the aspect-ratio-constrained preview layout, and the
+│                                 debug-only diagnostics overlay), CameraRoute (permissions + Hilt
+│                                 wiring), CameraPreview
 ├── voice/
 │   ├── domain/                   VoiceCommandRecognizer interface, VoiceCommandMatcher,
 │   │                             VoiceRecognitionState
@@ -449,16 +464,78 @@ crashing or interrupting capture.
 files, asserting the right fields are populated for both a Single-Shot failure and a burst-image
 failure.
 
+## Developer diagnostics
+
+Every capture request and every touch interaction on the camera screen can be traced end-to-end,
+so it's possible to answer "why didn't that tap take a photo?" from logs alone rather than by
+reading code or reproducing on-device.
+
+**Capture Attempt ID.** `CaptureCoordinator.requestCapture` generates a `CaptureAttemptId`
+(`RandomCaptureAttemptIdGenerator`, a random UUID) before any validation happens, and threads it
+through every `CaptureDiagnosticEvent` that request produces - `Requested`, `Accepted`, `Rejected`,
+`CameraXRequestSubmitted`, `CameraXCaptureStarted`, `ImageSaved`, `Completed`, and `CameraXError` -
+plus the existing `CaptureErrorLogEntry`/`CaptureMetadataLogEntry` records, which now also carry it.
+A whole Burst Mode command shares one id across all four images (it is one *capture attempt* that
+happens to produce several images), individually distinguished by
+`CameraXRequestSubmitted.burstImageNumber`. A rejected request (`Rejected.reason`, a
+`CaptureRejectionReason`: `CAPTURE_ALREADY_RUNNING`/`BURST_ALREADY_RUNNING` when
+`Mutex.tryLock()` fails, depending on which mode currently holds the lock) still gets logged, so a
+dropped duplicate trigger is visible in the log even though nothing was ever captured.
+
+**Gesture diagnostics.** `CameraScreen`'s `detectTapOrHorizontalSwipe` reports a
+`GestureDiagnosticEvent` for every touch interaction - `Detected` (pointer down), `Classified`
+(pointer up, with down/up position, duration, total horizontal/vertical movement, the system touch
+slop, a diagnostic-only swipe threshold, and the resulting `GestureClassification`: `TAP`,
+`SWIPE_LEFT`, `SWIPE_RIGHT`, `MOVEMENT_BELOW_SWIPE_THRESHOLD`, or `CANCELLED`), `Accepted`, and
+`Cancelled` (when the pointer's change disappears from the event stream before completing, with
+whatever overlay-visible/camera-accepting-requests context was available at the time). The
+swipe-threshold classification is diagnostic-only - it labels a drag that never exceeds it as
+`MOVEMENT_BELOW_SWIPE_THRESHOLD` in the log without changing the actual swipe-to-toggle-overlay
+behavior described above.
+
+**Where this is logged.** `GestureDiagnosticsLogger` and `CaptureDiagnosticsLogger` are both
+implemented by one class, `camera/data/AndroidDiagnosticsLogger.kt`. Capture-processing events
+always go to Logcat in every build type (`CaptureDiagnostics`/`GestureDiagnostics` tags) - this is
+"normal operational... logging", which the spec allows to remain enabled in Release - but gesture
+events are silently dropped unless `BuildConfig.DEBUG` is true, since detailed gesture diagnostics
+are explicitly a debug-build-only concern. Either stream can *additionally* be written as JSON
+Lines to an app-private file (`capture_diagnostics.log` / `gesture_diagnostics.log`) if the
+**Save diagnostic logs to file** setting is turned on (off by default; see "Settings" below) -
+`AndroidDiagnosticsLogger` mirrors that setting into a `@Volatile` flag from a background collector
+(the same pattern `CameraViewModel` already uses for the burst-deferred aspect ratio) rather than
+reading the suspend-based `SettingsRepository` on every call, since neither logging method is
+`suspend` - both fire on hot paths (every touch interaction, every stage of every capture) and must
+not add I/O latency to them.
+
+**Camera diagnostics.** `CameraPreview.kt` reports a `CameraDiagnosticsSnapshot` (selected camera,
+preview/capture resolution from each use case's `resolutionInfo`, requested aspect ratio, display
+rotation, capture mode) once right after binding, and again whenever the `OrientationEventListener`
+crosses into a new rotation bucket - not on every raw sensor callback.
+
+**Debug overlay.** A bug icon next to the settings gear (visible only when `BuildConfig.DEBUG`)
+toggles a small on-screen panel showing the last touch location, gesture classification, capture
+state, current aspect ratio, whether the camera is bound, the last Capture Attempt ID, and its
+trigger source. The toggle's own state (`CameraViewModel.diagnosticsOverlayEnabled`) is plain
+in-memory `ViewModel` state, not persisted - the `BuildConfig.DEBUG` check at the render site is
+what actually guarantees the overlay never appears in a Release build (a compile-time constant, so
+R8 dead-code-eliminates that branch entirely), independent of whatever the toggle state happens to
+be.
+
+**Trigger sources are now distinguishable.** `CaptureTrigger` gained a `ShutterButton` variant
+(previously the shutter FAB reused `ScreenTouch`), so `CaptureTriggerSource` (`TOUCH`, `VOICE`,
+`VOLUME_BUTTON`, `SHUTTER_BUTTON`) can tell a screen tap apart from a shutter-button press in the
+diagnostic log, per `CaptureTrigger.toDiagnosticSource()`.
+
 ## Settings
 
 A gear icon in the top-right corner of the camera screen (always visible, regardless of
 permission state) opens a separate, full-screen settings screen (`settings/ui/SettingsScreen.kt`),
 reached and left via `androidx.navigation.compose.NavHost` in `CaptureApp.kt`; the system/gesture
 back action returns to the camera screen normally. The screen's content is vertically scrollable
-(`Modifier.verticalScroll`) now that five settings no longer reliably fit a single screen without
+(`Modifier.verticalScroll`) now that six settings no longer reliably fit a single screen without
 scrolling on every device/test window size.
 
-The settings screen has five controls, all backed by `SettingsRepository` /
+The settings screen has six controls, all backed by `SettingsRepository` /
 `DataStoreSettingsRepository` (Jetpack DataStore Preferences, so values persist across app
 restarts):
 
@@ -474,6 +551,9 @@ restarts):
    (`AppSettings.BURST_INTERVAL_RANGE_MILLIS`), defaulting to 500 ms.
 5. **Capture aspect ratio** - a `SingleChoiceSegmentedButtonRow` choosing between 4:3 (default)
    and 16:9 (see "Capture aspect ratio and preview framing" above).
+6. **Save diagnostic logs to file** - a `Switch`, off by default, controlling only whether
+   capture/gesture diagnostic events are *additionally* written to a file; Logcat output is
+   unaffected either way (see "Developer diagnostics" above).
 
 **The picker's own Uri is not kept long-term.** It's tempting to assume the Photo Picker's
 `content://` Uri stays readable indefinitely once granted - no `ContentResolver
@@ -496,7 +576,7 @@ common flow immediately after picking an image (pick it, see the thumbnail updat
 a DataStore write still in flight on `viewModelScope` at that moment could be cancelled before it
 durably reached disk, so a freshly-picked image could silently fail to survive an app restart.
 `onVibrationDurationChanged`/`onImageSelected`/`onCaptureModeChanged`/`onBurstIntervalChanged`/
-`onCaptureAspectRatioChanged` all launch on the injected `@ApplicationScope` `CoroutineScope` instead (the same one `CameraViewModel`
+`onCaptureAspectRatioChanged`/`onDiagnosticsFileLoggingChanged` all launch on the injected `@ApplicationScope` `CoroutineScope` instead (the same one `CameraViewModel`
 already uses to release the voice recognizer after `onCleared()`, and to persist overlay
 visibility - see above), which outlives the settings screen. `SettingsViewModelTest`'s `"a selection write survives the view model being
 cleared right afterward"` case reproduces this with a real `ViewModelStore` to guard against a
@@ -732,6 +812,25 @@ since none of it is fully covered by automated tests:
       (`adb shell run-as com.example.capture cat files/capture_metadata.log`) and confirm the
       newest line's `widthPx`/`heightPx`/`actualAspectRatio` match the photo actually saved, and
       `requestedAspectRatio`/`matchesTolerance` reflect the setting that was active.
+- [ ] **Capture diagnostics in Logcat:** filter `adb logcat` on tag `CaptureDiagnostics` and take a
+      photo; confirm `Requested`/`Accepted`/`CameraXRequestSubmitted`/`CameraXCaptureStarted`/
+      `ImageSaved`/`Completed` all appear with the same `attemptId`, in that order; trigger a
+      capture immediately after another (within the debounce window) and confirm a `Rejected` entry
+      appears instead.
+- [ ] **Gesture diagnostics only in a debug build:** filter `adb logcat` on tag
+      `GestureDiagnostics`, tap and swipe the preview on a debug build and confirm entries appear;
+      install a release build (`assembleRelease`) instead and confirm the tag never appears, and
+      that the bug-icon diagnostics toggle and its overlay are both absent from the screen.
+- [ ] **Diagnostics overlay:** on a debug build, tap the bug icon next to the settings gear and
+      confirm a small panel appears showing capture state, aspect ratio, camera-bound status, the
+      last gesture classification, last touch location, last Capture Attempt ID, and trigger
+      source, all updating live as you interact with the screen; tap the icon again and confirm it
+      disappears.
+- [ ] **Diagnostic file logging setting:** turn on "Save diagnostic logs to file" in Settings, take
+      a photo and perform a swipe, then pull both files (`adb shell run-as com.example.capture cat
+      files/capture_diagnostics.log` and `.../gesture_diagnostics.log`) and confirm well-formed JSON
+      lines appear in each; turn the setting back off and confirm no new lines are appended for
+      subsequent actions.
 
 ### Known device-manufacturer differences
 
@@ -902,6 +1001,33 @@ across 9 classes, including the new `CameraPreviewRotationTest` covering all fou
 resulting APK was installed on a connected physical device, where CameraX's own binding log
 (`SessionConfig`) was inspected via `adb logcat` and confirmed both `Preview` and `ImageCapture`
 shared a single `viewPort`, the camera opened with no errors, and the app launched with no crashes.
+
+Developer Diagnostics were added next, per a further `app-spec.md` update: `CaptureAttemptId`
+generation and propagation through `CaptureCoordinator`/`CameraXCaptureController`, structured
+`CaptureDiagnosticEvent`/`GestureDiagnosticEvent` traces logged by the new
+`AndroidDiagnosticsLogger` (Logcat always, an optional JSON-lines file behind a new persisted
+setting, gesture events gated to debug builds only), a `CaptureTrigger.ShutterButton` variant so
+the shutter button and a screen tap are distinguishable trigger sources, a debug-only diagnostics
+overlay in `CameraScreen.kt`, and a `CameraDiagnosticsSnapshot` reported by `CameraPreview.kt` on
+bind and on each rotation-bucket change. This also added `captureAttemptId` to the existing
+`CaptureErrorLogEntry`/`CaptureMetadataLogEntry` records and threaded a `CaptureAttemptId` through
+`CaptureState.Capturing`/`BurstStarted`/`CaptureResult`, so the debug overlay (and any future
+consumer) can read the attempt id straight off coordinator state rather than needing a side
+channel. `app/build.gradle.kts` turned on `buildFeatures.buildConfig = true` so `BuildConfig.DEBUG`
+could gate both the gesture-diagnostics logger and the overlay's render site.
+
+One test, once written, turned out not to prove what it claimed: a test for the
+`CAPTURE_ALREADY_RUNNING` rejection reason launched two concurrent Single-Shot requests expecting
+them to race for `CaptureCoordinator`'s mutex, but with these fakes a Single-Shot capture has no
+real suspension point, so under `StandardTestDispatcher` the first request always ran to full
+completion before the second's continuation was even dispatched - the second was rejected by the
+*debounce* check instead (`UNKNOWN`, not `CAPTURE_ALREADY_RUNNING`), which `testDebugUnitTest` caught
+immediately. The sibling `BURST_ALREADY_RUNNING` case (first request in `CaptureMode.BURST`, which
+has a genuine `delay()` between images) does exercise real interleaving and passes; the
+`CAPTURE_ALREADY_RUNNING` branch is otherwise identical two-line logic in `requestCapture` and is
+covered by code review rather than a dedicated test, rather than adding new suspension
+infrastructure to the fakes just for symmetry. With that test removed, `testDebugUnitTest` (112/112
+tests across 9 classes), `lintDebug` (0 issues), and `assembleDebug` all passed.
 
 The one command genuinely not run is `./gradlew connectedDebugAndroidTest` - no emulator was
 available in this environment (a physical device was connected and used for manual `adb`-driven

@@ -2,13 +2,20 @@ package com.example.capture.testing
 
 import com.example.capture.camera.domain.CameraCaptureController
 import com.example.capture.camera.domain.CameraCaptureOutcome
+import com.example.capture.camera.domain.CameraDiagnosticsSnapshot
 import com.example.capture.camera.domain.CaptureAspectRatio
+import com.example.capture.camera.domain.CaptureAttemptId
+import com.example.capture.camera.domain.CaptureAttemptIdGenerator
+import com.example.capture.camera.domain.CaptureDiagnosticEvent
+import com.example.capture.camera.domain.CaptureDiagnosticsLogger
 import com.example.capture.camera.domain.CaptureErrorLogEntry
 import com.example.capture.camera.domain.CaptureErrorLogger
 import com.example.capture.camera.domain.CaptureMetadataLogEntry
 import com.example.capture.camera.domain.CaptureMetadataLogger
 import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.camera.domain.FlashTorchController
+import com.example.capture.camera.domain.GestureDiagnosticEvent
+import com.example.capture.camera.domain.GestureDiagnosticsLogger
 import com.example.capture.camera.domain.HapticFeedback
 import com.example.capture.camera.domain.ImageMetadata
 import com.example.capture.camera.domain.ImageMetadataReader
@@ -51,10 +58,12 @@ class FakeCameraCaptureController(
     var captureCount: Int = 0
         private set
     val capturedEntries = mutableListOf<PendingPhotoEntry>()
+    val capturedAttemptIds = mutableListOf<CaptureAttemptId>()
 
-    override suspend fun captureTo(entry: PendingPhotoEntry): CameraCaptureOutcome {
+    override suspend fun captureTo(entry: PendingPhotoEntry, attemptId: CaptureAttemptId): CameraCaptureOutcome {
         captureCount++
         capturedEntries += entry
+        capturedAttemptIds += attemptId
         return outcome(entry)
     }
 }
@@ -119,6 +128,10 @@ class FakeSettingsRepository(initial: AppSettings = AppSettings()) : SettingsRep
 
     override suspend fun setCaptureAspectRatio(ratio: CaptureAspectRatio) {
         _settings.value = _settings.value.copy(captureAspectRatio = ratio)
+    }
+
+    override suspend fun setDiagnosticsFileLoggingEnabled(enabled: Boolean) {
+        _settings.value = _settings.value.copy(diagnosticsFileLoggingEnabled = enabled)
     }
 }
 
@@ -210,5 +223,33 @@ class FakeVoiceCommandRecognizer : VoiceCommandRecognizer {
 
     fun emit(state: VoiceRecognitionState) {
         _state.value = state
+    }
+}
+
+/** Deterministic ids ("attempt-0", "attempt-1", ...) instead of random UUIDs, so tests can assert on them. */
+class FakeCaptureAttemptIdGenerator : CaptureAttemptIdGenerator {
+    private var nextIndex = 0
+
+    override fun generate(): CaptureAttemptId = CaptureAttemptId("attempt-${nextIndex++}")
+}
+
+class FakeCaptureDiagnosticsLogger : CaptureDiagnosticsLogger {
+    val loggedEvents = mutableListOf<CaptureDiagnosticEvent>()
+    val loggedCameraStates = mutableListOf<CameraDiagnosticsSnapshot>()
+
+    override fun logEvent(event: CaptureDiagnosticEvent) {
+        loggedEvents += event
+    }
+
+    override fun logCameraState(snapshot: CameraDiagnosticsSnapshot) {
+        loggedCameraStates += snapshot
+    }
+}
+
+class FakeGestureDiagnosticsLogger : GestureDiagnosticsLogger {
+    val loggedEvents = mutableListOf<GestureDiagnosticEvent>()
+
+    override fun log(event: GestureDiagnosticEvent) {
+        loggedEvents += event
     }
 }

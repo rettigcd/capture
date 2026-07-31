@@ -6,15 +6,20 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.capture.camera.data.CameraControlHolder
 import com.example.capture.camera.data.ImageCaptureUseCaseHolder
+import com.example.capture.camera.domain.CameraDiagnosticsSnapshot
 import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureCoordinator
+import com.example.capture.camera.domain.CaptureDiagnosticsLogger
 import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.camera.domain.CaptureOutcome
 import com.example.capture.camera.domain.CaptureState
 import com.example.capture.camera.domain.CaptureTrigger
 import com.example.capture.camera.domain.FlashTorchController
+import com.example.capture.camera.domain.GestureDiagnosticEvent
+import com.example.capture.camera.domain.GestureDiagnosticsLogger
 import com.example.capture.camera.domain.HapticFeedback
 import com.example.capture.camera.domain.OverlayVisibilityRepository
+import com.example.capture.camera.domain.toDiagnosticSource
 import com.example.capture.common.ApplicationScope
 import com.example.capture.permissions.CapturePermissions
 import com.example.capture.permissions.PermissionStatus
@@ -27,11 +32,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -51,6 +58,8 @@ class CameraViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val overlayVisibilityRepository: OverlayVisibilityRepository,
     private val flashTorchController: FlashTorchController,
+    private val gestureDiagnosticsLogger: GestureDiagnosticsLogger,
+    private val captureDiagnosticsLogger: CaptureDiagnosticsLogger,
     @ApplicationScope private val applicationScope: CoroutineScope,
 ) : ViewModel() {
 
@@ -80,6 +89,16 @@ class CameraViewModel @Inject constructor(
 
     @Volatile
     private var burstInProgress = false
+
+    // Debug-only state (see "Debug Overlay" in app-spec.md): kept separate from uiState/
+    // CameraUiState so this diagnostics-only concern can't affect the screen's main render path or
+    // its tests. The toggle button that flips diagnosticsOverlayEnabled is itself only rendered in
+    // a debug build (see CameraScreen), so this never becomes true in Release.
+    private val _diagnosticsOverlayEnabled = MutableStateFlow(false)
+    val diagnosticsOverlayEnabled: StateFlow<Boolean> = _diagnosticsOverlayEnabled.asStateFlow()
+
+    private val _diagnosticsOverlayInfo = MutableStateFlow(DiagnosticsOverlayInfo())
+    val diagnosticsOverlayInfo: StateFlow<DiagnosticsOverlayInfo> = _diagnosticsOverlayInfo.asStateFlow()
 
     val uiState: StateFlow<CameraUiState> = combine(
         captureVoicePermissionState,
@@ -164,11 +183,39 @@ class CameraViewModel @Inject constructor(
                 }
             }
         }
+        // Keeps the debug overlay's capture-state/attempt-id/trigger-source fields current (see
+        // "Debug Overlay" in app-spec.md) - a dedicated collector so this diagnostics-only concern
+        // stays out of the uiState combine above.
+        viewModelScope.launch {
+            captureCoordinator.state.collect { state ->
+                when (state) {
+                    is CaptureState.Capturing -> _diagnosticsOverlayInfo.update {
+                        it.copy(
+                            captureState = "Capturing",
+                            lastCaptureAttemptId = state.attemptId,
+                            lastCaptureTriggerSource = state.trigger.toDiagnosticSource(),
+                        )
+                    }
+                    is CaptureState.BurstStarted -> _diagnosticsOverlayInfo.update {
+                        it.copy(
+                            captureState = "BurstStarted",
+                            lastCaptureAttemptId = state.attemptId,
+                            lastCaptureTriggerSource = state.trigger.toDiagnosticSource(),
+                        )
+                    }
+                    is CaptureState.Completed -> _diagnosticsOverlayInfo.update {
+                        it.copy(captureState = if (state.result.outcome is CaptureOutcome.Success) "Completed:Success" else "Completed:Failure")
+                    }
+                    is CaptureState.BurstCompleted -> _diagnosticsOverlayInfo.update { it.copy(captureState = "BurstCompleted") }
+                    CaptureState.Idle -> {}
+                }
+            }
+        }
     }
 
     fun onScreenTouch() = requestCapture(CaptureTrigger.ScreenTouch)
 
-    fun onShutterButtonClick() = requestCapture(CaptureTrigger.ScreenTouch)
+    fun onShutterButtonClick() = requestCapture(CaptureTrigger.ShutterButton)
 
     fun onVolumeUpPressed() = requestCapture(CaptureTrigger.VolumeUp)
 
@@ -185,6 +232,29 @@ class CameraViewModel @Inject constructor(
      * place [CameraControlHolder] is touched from the UI layer.
      */
     fun attachCamera(camera: Camera?) = cameraControlHolder.attach(camera)
+
+    /** Wired up as `CameraScreen`'s `onGestureDiagnosticEvent` callback (see "Gesture Events" in app-spec.md). */
+    fun onGestureDiagnosticEvent(event: GestureDiagnosticEvent) {
+        gestureDiagnosticsLogger.log(event)
+        when (event) {
+            is GestureDiagnosticEvent.Detected ->
+                _diagnosticsOverlayInfo.update { it.copy(lastTouchLocation = event.downX to event.downY) }
+            is GestureDiagnosticEvent.Classified ->
+                _diagnosticsOverlayInfo.update { it.copy(lastGestureClassification = event.classification) }
+            else -> {}
+        }
+    }
+
+    /** Wired up as `CameraPreview`'s `onCameraDiagnostics` callback (see "Camera Diagnostics" in app-spec.md). */
+    fun onCameraDiagnostics(snapshot: CameraDiagnosticsSnapshot) {
+        captureDiagnosticsLogger.logCameraState(snapshot)
+        _diagnosticsOverlayInfo.update { it.copy(cameraBound = true) }
+    }
+
+    /** Debug-only: flips whether the diagnostics overlay is drawn (see "Debug Overlay" in app-spec.md). */
+    fun onDiagnosticsOverlayToggled() {
+        _diagnosticsOverlayEnabled.update { !it }
+    }
 
     private fun requestCapture(trigger: CaptureTrigger) {
         viewModelScope.launch {

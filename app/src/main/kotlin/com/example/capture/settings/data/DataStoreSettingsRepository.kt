@@ -3,6 +3,7 @@ package com.example.capture.settings.data
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -29,6 +30,7 @@ class DataStoreSettingsRepository @Inject constructor(
         val CAPTURE_MODE = stringPreferencesKey("capture_mode")
         val BURST_INTERVAL_MILLIS = longPreferencesKey("burst_interval_millis")
         val CAPTURE_ASPECT_RATIO = stringPreferencesKey("capture_aspect_ratio")
+        val DIAGNOSTICS_FILE_LOGGING_ENABLED = booleanPreferencesKey("diagnostics_file_logging_enabled")
     }
 
     override val settings: Flow<AppSettings> = context.settingsDataStore.data.map { preferences ->
@@ -41,6 +43,7 @@ class DataStoreSettingsRepository @Inject constructor(
                 ?: AppSettings.DEFAULT_BURST_INTERVAL_MILLIS,
             captureAspectRatio = preferences[Keys.CAPTURE_ASPECT_RATIO]?.toCaptureAspectRatioOrDefault()
                 ?: CaptureAspectRatio.RATIO_4_3,
+            diagnosticsFileLoggingEnabled = preferences[Keys.DIAGNOSTICS_FILE_LOGGING_ENABLED] ?: false,
         )
     }
 
@@ -68,6 +71,10 @@ class DataStoreSettingsRepository @Inject constructor(
 
     override suspend fun setCaptureAspectRatio(ratio: CaptureAspectRatio) {
         context.settingsDataStore.edit { it[Keys.CAPTURE_ASPECT_RATIO] = ratio.name }
+    }
+
+    override suspend fun setDiagnosticsFileLoggingEnabled(enabled: Boolean) {
+        context.settingsDataStore.edit { it[Keys.DIAGNOSTICS_FILE_LOGGING_ENABLED] = enabled }
     }
 
     // Falls back to the default rather than throwing if a future release ever removes/renames an

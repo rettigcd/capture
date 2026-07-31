@@ -37,6 +37,7 @@ fun SettingsRoute(onBack: () -> Unit, modifier: Modifier = Modifier, viewModel: 
         onCaptureModeChanged = viewModel::onCaptureModeChanged,
         onBurstIntervalChanged = viewModel::onBurstIntervalChanged,
         onCaptureAspectRatioChanged = viewModel::onCaptureAspectRatioChanged,
+        onDiagnosticsFileLoggingChanged = viewModel::onDiagnosticsFileLoggingChanged,
         onBack = onBack,
         modifier = modifier,
     )

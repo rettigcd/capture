@@ -10,6 +10,13 @@ data class AppSettings(
     val captureMode: CaptureMode = CaptureMode.SINGLE_SHOT,
     val burstIntervalMillis: Long = DEFAULT_BURST_INTERVAL_MILLIS,
     val captureAspectRatio: CaptureAspectRatio = CaptureAspectRatio.RATIO_4_3,
+    /**
+     * Off by default (see "Diagnostic Persistence" in app-spec.md: "disabled by default"). Logcat
+     * output for capture-processing diagnostics is always available regardless of this setting;
+     * this only controls whether the same events are additionally durably written to
+     * `capture_diagnostics.log` for post-analysis.
+     */
+    val diagnosticsFileLoggingEnabled: Boolean = false,
 ) {
     companion object {
         const val DEFAULT_VIBRATION_DURATION_MILLIS = 60L

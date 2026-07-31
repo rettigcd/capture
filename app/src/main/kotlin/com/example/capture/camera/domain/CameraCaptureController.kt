@@ -9,5 +9,5 @@ package com.example.capture.camera.domain
  * fake implementation of this interface instead.
  */
 interface CameraCaptureController {
-    suspend fun captureTo(entry: PendingPhotoEntry): CameraCaptureOutcome
+    suspend fun captureTo(entry: PendingPhotoEntry, attemptId: CaptureAttemptId): CameraCaptureOutcome
 }

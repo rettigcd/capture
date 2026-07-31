@@ -37,6 +37,7 @@ class SettingsScreenTest {
         onCaptureModeChanged: (CaptureMode) -> Unit = {},
         onBurstIntervalChanged: (Long) -> Unit = {},
         onCaptureAspectRatioChanged: (CaptureAspectRatio) -> Unit = {},
+        onDiagnosticsFileLoggingChanged: (Boolean) -> Unit = {},
         onBack: () -> Unit = {},
     ) {
         composeTestRule.setContent {
@@ -47,6 +48,7 @@ class SettingsScreenTest {
                 onCaptureModeChanged = onCaptureModeChanged,
                 onBurstIntervalChanged = onBurstIntervalChanged,
                 onCaptureAspectRatioChanged = onCaptureAspectRatioChanged,
+                onDiagnosticsFileLoggingChanged = onDiagnosticsFileLoggingChanged,
                 onBack = onBack,
             )
         }
@@ -71,12 +73,28 @@ class SettingsScreenTest {
     @Test
     fun noOverlayVisibilityControlExists_onTheSettingsScreen() {
         // Overlay visibility is controlled exclusively by a swipe gesture on the camera screen -
-        // there must be no settings-screen control for it (no toggle/switch of any kind here).
+        // the only toggle on this screen is the diagnostics-file-logging switch (see
+        // "Diagnostic Persistence" in app-spec.md); there must be no separate one for the overlay.
         setScreen(SettingsUiState())
 
         assertThat(
             composeTestRule.onAllNodes(isToggleable()).fetchSemanticsNodes(atLeastOneRootRequired = false),
-        ).isEmpty()
+        ).hasSize(1)
+    }
+
+    @Test
+    fun diagnosticsFileLoggingSwitch_reflectsTheCurrentValue_andInvokesCallbackWhenToggled() {
+        var enabled: Boolean? = null
+        setScreen(
+            SettingsUiState(diagnosticsFileLoggingEnabled = false),
+            onDiagnosticsFileLoggingChanged = { enabled = it },
+        )
+
+        composeTestRule.onNode(isToggleable())
+            .performScrollTo()
+            .performClick()
+
+        assertThat(enabled).isTrue()
     }
 
     @Test

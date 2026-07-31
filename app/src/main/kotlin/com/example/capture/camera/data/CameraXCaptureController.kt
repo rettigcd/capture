@@ -7,7 +7,12 @@ import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import com.example.capture.camera.domain.CameraCaptureController
 import com.example.capture.camera.domain.CameraCaptureOutcome
+import com.example.capture.camera.domain.CaptureAttemptId
+import com.example.capture.camera.domain.CaptureDiagnosticEvent
+import com.example.capture.camera.domain.CaptureDiagnosticsLogger
+import com.example.capture.camera.domain.CaptureRejectionReason
 import com.example.capture.camera.domain.PendingPhotoEntry
+import com.example.capture.common.TimeProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.FileNotFoundException
@@ -23,11 +28,16 @@ import kotlin.coroutines.resume
 class CameraXCaptureController @Inject constructor(
     private val imageCaptureUseCaseHolder: ImageCaptureUseCaseHolder,
     @ApplicationContext private val context: Context,
+    private val diagnosticsLogger: CaptureDiagnosticsLogger,
+    private val timeProvider: TimeProvider,
 ) : CameraCaptureController {
 
-    override suspend fun captureTo(entry: PendingPhotoEntry): CameraCaptureOutcome {
+    override suspend fun captureTo(entry: PendingPhotoEntry, attemptId: CaptureAttemptId): CameraCaptureOutcome {
         val imageCapture = imageCaptureUseCaseHolder.imageCapture.value
-            ?: return CameraCaptureOutcome.Failure("Camera preview is not ready yet.")
+            ?: return CameraCaptureOutcome.Failure(
+                "Camera preview is not ready yet.",
+                reason = CaptureRejectionReason.IMAGE_CAPTURE_UNAVAILABLE,
+            )
 
         val outputStream = try {
             context.contentResolver.openOutputStream(entry.uriString.toUri())
@@ -38,6 +48,9 @@ class CameraXCaptureController @Inject constructor(
         return outputStream.use { stream ->
             suspendCancellableCoroutine { continuation ->
                 val outputOptions = ImageCapture.OutputFileOptions.Builder(stream).build()
+                diagnosticsLogger.logEvent(
+                    CaptureDiagnosticEvent.CameraXCaptureStarted(attemptId, timeProvider.currentTimeMillis()),
+                )
                 // A capture already in flight when the hardware shutter fires can't be cleanly
                 // aborted mid-exposure, so cancellation here just stops waiting for the result;
                 // it does not attempt to interrupt CameraX.
@@ -50,6 +63,14 @@ class CameraXCaptureController @Inject constructor(
                         }
 
                         override fun onError(exception: ImageCaptureException) {
+                            diagnosticsLogger.logEvent(
+                                CaptureDiagnosticEvent.CameraXError(
+                                    attemptId,
+                                    timeProvider.currentTimeMillis(),
+                                    exception.message ?: "Capture failed",
+                                    CaptureRejectionReason.UNKNOWN,
+                                ),
+                            )
                             continuation.resume(
                                 CameraCaptureOutcome.Failure(exception.message ?: "Capture failed", exception),
                             )
