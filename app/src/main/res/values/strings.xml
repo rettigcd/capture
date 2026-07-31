@@ -30,4 +30,7 @@
     <string name="settings_capture_mode_single_shot">Single</string>
     <string name="settings_capture_mode_burst">Burst</string>
     <string name="settings_burst_interval_label">Burst interval: %1$d ms</string>
+    <string name="settings_aspect_ratio_label">Capture aspect ratio</string>
+    <string name="settings_aspect_ratio_4_3">4:3</string>
+    <string name="settings_aspect_ratio_16_9">16:9</string>
 </resources>

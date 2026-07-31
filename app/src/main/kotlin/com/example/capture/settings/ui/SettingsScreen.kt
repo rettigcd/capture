@@ -31,6 +31,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.example.capture.R
+import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.settings.domain.AppSettings
 import kotlin.math.roundToLong
@@ -48,6 +49,7 @@ fun SettingsScreen(
     onPickImageClick: () -> Unit,
     onCaptureModeChanged: (CaptureMode) -> Unit,
     onBurstIntervalChanged: (Long) -> Unit,
+    onCaptureAspectRatioChanged: (CaptureAspectRatio) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -93,6 +95,11 @@ fun SettingsScreen(
             BurstIntervalSetting(
                 intervalMillis = uiState.burstIntervalMillis,
                 onIntervalChanged = onBurstIntervalChanged,
+            )
+            HorizontalDivider()
+            CaptureAspectRatioSetting(
+                aspectRatio = uiState.captureAspectRatio,
+                onAspectRatioChanged = onCaptureAspectRatioChanged,
             )
         }
     }
@@ -174,5 +181,32 @@ private fun BurstIntervalSetting(intervalMillis: Long, onIntervalChanged: (Long)
             valueRange = range.first.toFloat()..range.last.toFloat(),
             steps = (stepCount - 1).coerceAtLeast(0),
         )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CaptureAspectRatioSetting(
+    aspectRatio: CaptureAspectRatio,
+    onAspectRatioChanged: (CaptureAspectRatio) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.settings_aspect_ratio_label))
+        SingleChoiceSegmentedButtonRow {
+            SegmentedButton(
+                selected = aspectRatio == CaptureAspectRatio.RATIO_4_3,
+                onClick = { onAspectRatioChanged(CaptureAspectRatio.RATIO_4_3) },
+                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+            ) {
+                Text(stringResource(R.string.settings_aspect_ratio_4_3))
+            }
+            SegmentedButton(
+                selected = aspectRatio == CaptureAspectRatio.RATIO_16_9,
+                onClick = { onAspectRatioChanged(CaptureAspectRatio.RATIO_16_9) },
+                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+            ) {
+                Text(stringResource(R.string.settings_aspect_ratio_16_9))
+            }
+        }
     }
 }

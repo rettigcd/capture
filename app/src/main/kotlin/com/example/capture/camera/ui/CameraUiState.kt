@@ -1,5 +1,6 @@
 package com.example.capture.camera.ui
 
+import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.permissions.PermissionStatus
 
@@ -22,6 +23,14 @@ data class CameraUiState(
     val overlayVisible: Boolean = false,
     val overlayImageUriString: String? = null,
     val captureMode: CaptureMode = CaptureMode.SINGLE_SHOT,
+    /**
+     * The aspect ratio currently in effect for both the preview layout and the CameraX use
+     * cases. This lags behind the persisted setting while a burst is in progress - see
+     * [CameraViewModel]'s burst-deferred aspect-ratio handling and "Capture Aspect Ratio and
+     * Preview Framing" in app-spec.md ("changing the setting while a burst is active must not
+     * alter the active burst").
+     */
+    val captureAspectRatio: CaptureAspectRatio = CaptureAspectRatio.RATIO_4_3,
 )
 
 /**

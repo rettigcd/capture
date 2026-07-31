@@ -1,5 +1,6 @@
 package com.example.capture.camera.ui
 
+import android.content.res.Configuration
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
@@ -41,6 +43,7 @@ import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -51,6 +54,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.example.capture.R
+import com.example.capture.camera.domain.previewRatio
 import com.example.capture.permissions.PermissionStatus
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -134,13 +138,20 @@ private fun GrantedCameraContent(
 
         // Full-screen tap-to-capture and horizontal-swipe-to-toggle-the-overlay, handled by one
         // gesture detector so a real drag (which cancels the tap) and a quick tap can't both fire
-        // for the same touch. Always underneath the overlay image (which never installs its own
-        // pointer input), so this keeps receiving touches anywhere on screen regardless of
-        // whether the overlay currently covers that area.
+        // for the same touch. This layer spans the whole screen - not just the aspect-ratio-
+        // constrained preview below - so gestures and taps also work over the letterboxed/
+        // pillarboxed background and wherever the overlay currently covers (see "Capture Aspect
+        // Ratio and Preview Framing" / "Overlay sizing" in app-spec.md: gestures and capture must
+        // work across the full screen, not only within the preview area). Its background color
+        // is what shows through the unused letterbox/pillarbox space around the preview.
         val previewDescription = stringResource(R.string.camera_preview_content_description)
+        val configuration = LocalConfiguration.current
+        val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+        val previewAspectRatio = uiState.captureAspectRatio.previewRatio(isPortrait)
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
                 .semantics { contentDescription = previewDescription }
                 .pointerInput(widthPx) {
                     detectTapOrHorizontalSwipe(
@@ -163,10 +174,14 @@ private fun GrantedCameraContent(
                     )
                 },
         ) {
-            // Always composed, even while the overlay image below covers it, so CameraX stays
-            // bound and capture keeps working exactly as if the preview were visible - the swipe
-            // only changes what's drawn on screen, never whether the camera is running.
-            cameraPreview(Modifier.fillMaxSize())
+            // Centered and constrained to the selected capture aspect ratio - letterboxed or
+            // pillarboxed rather than stretched to fill the screen. Always composed, even while
+            // the overlay image above covers it, so CameraX stays bound and capture keeps working
+            // exactly as if the preview were visible - the swipe only changes what's drawn on
+            // screen, never whether the camera is running.
+            Box(modifier = Modifier.align(Alignment.Center).aspectRatio(previewAspectRatio)) {
+                cameraPreview(Modifier.fillMaxSize())
+            }
         }
 
         if (uiState.overlayImageUriString != null) {

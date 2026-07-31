@@ -1,5 +1,6 @@
 package com.example.capture.settings.ui
 
+import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.settings.domain.AppSettings
 import com.example.capture.testing.FakeOverlayImageStore
@@ -175,6 +176,21 @@ class SettingsViewModelTest {
         vm.onBurstIntervalChanged(0L)
         advanceUntilIdle()
         assertThat(vm.uiState.value.burstIntervalMillis).isEqualTo(AppSettings.BURST_INTERVAL_RANGE_MILLIS.first)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `changing the capture aspect ratio updates state and is persisted`() = runTest {
+        val repository = FakeSettingsRepository()
+        val vm = buildViewModel(repository)
+        val collectJob = launch { vm.uiState.collect {} }
+
+        vm.onCaptureAspectRatioChanged(CaptureAspectRatio.RATIO_16_9)
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.captureAspectRatio).isEqualTo(CaptureAspectRatio.RATIO_16_9)
+        assertThat(repository.settings.value.captureAspectRatio).isEqualTo(CaptureAspectRatio.RATIO_16_9)
 
         collectJob.cancel()
     }

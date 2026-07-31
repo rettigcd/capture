@@ -1,5 +1,6 @@
 package com.example.capture.settings.ui
 
+import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.settings.domain.AppSettings
 
@@ -9,4 +10,5 @@ data class SettingsUiState(
     val overlayImageUriString: String? = null,
     val captureMode: CaptureMode = CaptureMode.SINGLE_SHOT,
     val burstIntervalMillis: Long = AppSettings.DEFAULT_BURST_INTERVAL_MILLIS,
+    val captureAspectRatio: CaptureAspectRatio = CaptureAspectRatio.RATIO_4_3,
 )

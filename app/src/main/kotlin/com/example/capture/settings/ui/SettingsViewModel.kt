@@ -3,6 +3,7 @@ package com.example.capture.settings.ui
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.common.ApplicationScope
 import com.example.capture.settings.domain.AppSettings
@@ -68,6 +69,10 @@ class SettingsViewModel @Inject constructor(
         applicationScope.launch { settingsRepository.setBurstIntervalMillis(clamped) }
     }
 
+    fun onCaptureAspectRatioChanged(ratio: CaptureAspectRatio) {
+        applicationScope.launch { settingsRepository.setCaptureAspectRatio(ratio) }
+    }
+
     private companion object {
         const val STOP_TIMEOUT_MILLIS = 5_000L
         const val TAG = "SettingsViewModel"
@@ -79,4 +84,5 @@ private fun AppSettings.toUiState() = SettingsUiState(
     overlayImageUriString = overlayImageUriString,
     captureMode = captureMode,
     burstIntervalMillis = burstIntervalMillis,
+    captureAspectRatio = captureAspectRatio,
 )

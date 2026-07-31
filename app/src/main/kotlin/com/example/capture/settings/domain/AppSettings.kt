@@ -1,5 +1,6 @@
 package com.example.capture.settings.domain
 
+import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
 
 /** Immutable snapshot of every user-configurable setting, persisted across app restarts. */
@@ -8,6 +9,7 @@ data class AppSettings(
     val overlayImageUriString: String? = null,
     val captureMode: CaptureMode = CaptureMode.SINGLE_SHOT,
     val burstIntervalMillis: Long = DEFAULT_BURST_INTERVAL_MILLIS,
+    val captureAspectRatio: CaptureAspectRatio = CaptureAspectRatio.RATIO_4_3,
 ) {
     companion object {
         const val DEFAULT_VIBRATION_DURATION_MILLIS = 60L

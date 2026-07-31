@@ -3,6 +3,8 @@ package com.example.capture.camera.domain
 import app.cash.turbine.test
 import com.example.capture.testing.FakeCameraCaptureController
 import com.example.capture.testing.FakeCaptureErrorLogger
+import com.example.capture.testing.FakeCaptureMetadataLogger
+import com.example.capture.testing.FakeImageMetadataReader
 import com.example.capture.testing.FakePhotoStorage
 import com.example.capture.testing.FakeTimeProvider
 import com.example.capture.testing.TestDispatcherProvider
@@ -23,10 +25,20 @@ class CaptureCoordinatorTest {
         camera: FakeCameraCaptureController = FakeCameraCaptureController(),
         storage: FakePhotoStorage = FakePhotoStorage(),
         errorLogger: FakeCaptureErrorLogger = FakeCaptureErrorLogger(),
+        imageMetadataReader: FakeImageMetadataReader = FakeImageMetadataReader(),
+        metadataLogger: FakeCaptureMetadataLogger = FakeCaptureMetadataLogger(),
         testScheduler: kotlinx.coroutines.test.TestCoroutineScheduler,
     ): CaptureCoordinator {
         val dispatcher = StandardTestDispatcher(testScheduler)
-        return CaptureCoordinator(camera, storage, timeProvider, TestDispatcherProvider(dispatcher), errorLogger)
+        return CaptureCoordinator(
+            camera,
+            storage,
+            timeProvider,
+            TestDispatcherProvider(dispatcher),
+            errorLogger,
+            imageMetadataReader,
+            metadataLogger,
+        )
     }
 
     @Test
@@ -228,5 +240,93 @@ class CaptureCoordinatorTest {
         assertThat(entry.burstImageNumber).isEqualTo(3)
         assertThat(entry.burstIntervalMillis).isEqualTo(250L)
         assertThat(entry.errorMessage).isEqualTo("simulated failure")
+    }
+
+    @Test
+    fun `a successful capture logs metadata matching the requested aspect ratio`() = runTest {
+        val camera = FakeCameraCaptureController()
+        val metadataLogger = FakeCaptureMetadataLogger()
+        val imageMetadataReader = FakeImageMetadataReader(
+            nextMetadata = ImageMetadata(widthPx = 4032, heightPx = 3024, exifOrientation = 1),
+        )
+        val sut = buildCoordinator(
+            camera,
+            imageMetadataReader = imageMetadataReader,
+            metadataLogger = metadataLogger,
+            testScheduler = testScheduler,
+        )
+
+        sut.requestCapture(CaptureTrigger.ScreenTouch, captureAspectRatio = CaptureAspectRatio.RATIO_4_3)
+
+        val entry = metadataLogger.loggedEntries.single()
+        assertThat(entry.widthPx).isEqualTo(4032)
+        assertThat(entry.heightPx).isEqualTo(3024)
+        assertThat(entry.requestedAspectRatio).isEqualTo(CaptureAspectRatio.RATIO_4_3)
+        assertThat(entry.actualAspectRatio).isEqualTo(CaptureAspectRatio.RATIO_4_3)
+        assertThat(entry.matchesTolerance).isTrue()
+        assertThat(entry.exifOrientation).isEqualTo(1)
+    }
+
+    @Test
+    fun `metadata is logged as a mismatch when the actual ratio differs from the requested one`() = runTest {
+        val camera = FakeCameraCaptureController()
+        val metadataLogger = FakeCaptureMetadataLogger()
+        // 16:9 dimensions returned even though 4:3 was requested - simulates CameraX falling back
+        // to the closest supported configuration (see "Preview and capture consistency").
+        val imageMetadataReader = FakeImageMetadataReader(
+            nextMetadata = ImageMetadata(widthPx = 4000, heightPx = 2250, exifOrientation = null),
+        )
+        val sut = buildCoordinator(
+            camera,
+            imageMetadataReader = imageMetadataReader,
+            metadataLogger = metadataLogger,
+            testScheduler = testScheduler,
+        )
+
+        sut.requestCapture(CaptureTrigger.ScreenTouch, captureAspectRatio = CaptureAspectRatio.RATIO_4_3)
+
+        val entry = metadataLogger.loggedEntries.single()
+        assertThat(entry.requestedAspectRatio).isEqualTo(CaptureAspectRatio.RATIO_4_3)
+        assertThat(entry.actualAspectRatio).isEqualTo(CaptureAspectRatio.RATIO_16_9)
+        assertThat(entry.matchesTolerance).isFalse()
+    }
+
+    @Test
+    fun `no metadata is logged when the capture fails`() = runTest {
+        val camera = FakeCameraCaptureController { CameraCaptureOutcome.Failure("no camera hardware") }
+        val metadataLogger = FakeCaptureMetadataLogger()
+        val sut = buildCoordinator(camera, metadataLogger = metadataLogger, testScheduler = testScheduler)
+
+        sut.requestCapture(CaptureTrigger.ScreenTouch)
+
+        assertThat(metadataLogger.loggedEntries).isEmpty()
+    }
+
+    @Test
+    fun `no metadata is logged when the saved image can't be read back`() = runTest {
+        val camera = FakeCameraCaptureController()
+        val metadataLogger = FakeCaptureMetadataLogger()
+        val imageMetadataReader = FakeImageMetadataReader(failNextRead = true)
+        val sut = buildCoordinator(
+            camera,
+            imageMetadataReader = imageMetadataReader,
+            metadataLogger = metadataLogger,
+            testScheduler = testScheduler,
+        )
+
+        sut.requestCapture(CaptureTrigger.ScreenTouch)
+
+        assertThat(metadataLogger.loggedEntries).isEmpty()
+    }
+
+    @Test
+    fun `each burst image logs its own metadata entry`() = runTest {
+        val camera = FakeCameraCaptureController()
+        val metadataLogger = FakeCaptureMetadataLogger()
+        val sut = buildCoordinator(camera, metadataLogger = metadataLogger, testScheduler = testScheduler)
+
+        sut.requestCapture(CaptureTrigger.ScreenTouch, CaptureMode.BURST, burstIntervalMillis = 250L)
+
+        assertThat(metadataLogger.loggedEntries).hasSize(BURST_IMAGE_COUNT)
     }
 }

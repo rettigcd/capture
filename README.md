@@ -43,6 +43,8 @@ flowchart TD
         OverlayIface[[OverlayVisibilityRepository]]
         ErrorLogIface[[CaptureErrorLogger]]
         FlashIface[[FlashTorchController]]
+        MetadataLogIface[[CaptureMetadataLogger]]
+        MetadataReadIface[[ImageMetadataReader]]
     end
 
     subgraph CameraData["camera.data"]
@@ -53,6 +55,8 @@ flowchart TD
         OverlayImpl[DataStoreOverlayVisibilityRepository]
         ErrorLogImpl[FileCaptureErrorLogger]
         FlashImpl[CameraXFlashTorchController]
+        MetadataLogImpl[FileCaptureMetadataLogger]
+        MetadataReadImpl[AndroidImageMetadataReader]
     end
 
     subgraph Voice["voice"]
@@ -84,12 +88,16 @@ flowchart TD
     Coordinator --> CamIface
     Coordinator --> StorageIface
     Coordinator --> ErrorLogIface
+    Coordinator --> MetadataLogIface
+    Coordinator --> MetadataReadIface
     CamIface -.implemented by.-> CamX
     StorageIface -.implemented by.-> MediaStoreImpl
     HapticIface -.implemented by.-> HapticImpl
     OverlayIface -.implemented by.-> OverlayImpl
     ErrorLogIface -.implemented by.-> ErrorLogImpl
     FlashIface -.implemented by.-> FlashImpl
+    MetadataLogIface -.implemented by.-> MetadataLogImpl
+    MetadataReadIface -.implemented by.-> MetadataReadImpl
     OverlayImpl --> DataStore
     FlashImpl --> Holder
     CamX --> Holder
@@ -127,16 +135,19 @@ com.example.capture
 ├── camera/
 │   ├── domain/                   CaptureTrigger, CaptureCoordinator, CaptureModels (incl.
 │   │                             CaptureMode, CaptureState.BurstStarted/BurstCompleted),
-│   │                             CaptureErrorLogger, the CameraCaptureController /
-│   │                             PhotoStorage / HapticFeedback / OverlayVisibilityRepository /
-│   │                             FlashTorchController interfaces
+│   │                             CaptureAspectRatio, AspectRatioClassifier, CaptureErrorLogger,
+│   │                             CaptureMetadataLogger, ImageMetadataReader, the
+│   │                             CameraCaptureController / PhotoStorage / HapticFeedback /
+│   │                             OverlayVisibilityRepository / FlashTorchController interfaces
 │   ├── data/                     CameraXCaptureController, MediaStorePhotoStorage,
 │   │                             ImageCaptureUseCaseHolder, CameraControlHolder,
 │   │                             AndroidHapticFeedback, DataStoreOverlayVisibilityRepository,
-│   │                             FileCaptureErrorLogger, CameraXFlashTorchController - the only
-│   │                             CameraX/MediaStore/Vibrator/DataStore/file-logging code
+│   │                             FileCaptureErrorLogger, CameraXFlashTorchController,
+│   │                             FileCaptureMetadataLogger, AndroidImageMetadataReader - the only
+│   │                             CameraX/MediaStore/Vibrator/DataStore/file-logging/EXIF code
 │   └── ui/                       CameraViewModel, CameraUiState, CameraScreen (stateless,
-│                                 including the swipe-gesture overlay logic),
+│                                 including the swipe-gesture overlay logic and the
+│                                 aspect-ratio-constrained preview layout),
 │                                 CameraRoute (permissions + Hilt wiring), CameraPreview
 ├── voice/
 │   ├── domain/                   VoiceCommandRecognizer interface, VoiceCommandMatcher,
@@ -186,6 +197,7 @@ verification"), rather than only guessing at current versions:
 | Navigation Compose | 2.9.8 | Latest stable; backs the "camera" / "settings" `NavHost` in `CaptureApp.kt`. |
 | DataStore Preferences | 1.2.1 | Latest stable; backs `DataStoreSettingsRepository`. |
 | Coil (`coil-compose`) | 3.5.0 | Latest stable. Coil 3's package is `coil3.compose`, not `coil.compose` (Coil 2's) - loads the overlay image and the settings-screen thumbnail from a `content://`/`file://` URI; no extra network module needed since both are local URIs. |
+| AndroidX ExifInterface | 1.3.7 | Latest stable; reads the EXIF orientation of a just-saved photo for the diagnostic metadata log (see "Capture aspect ratio and preview framing") - `BitmapFactory` alone gives dimensions but not orientation. |
 | `compileSdk`/`targetSdk` | 37 | The newer AndroidX releases above (`core-ktx` 1.19.0, `lifecycle` 2.11.0, `hilt-navigation-compose` 1.4.0) require compiling against API 37+; `compileSdk = 36` fails `checkDebugAarMetadata` with these versions. |
 | Java toolchain | 21 | See `app/build.gradle.kts`'s `kotlin { jvmToolchain(21) }` comment - verified end-to-end against a real JDK 21. |
 
@@ -290,6 +302,80 @@ asserts the settings screen has zero toggleable nodes). `CameraViewModel.onOverl
 writes on the injected `@ApplicationScope` `CoroutineScope`, for the same durability reasoning
 described below for settings writes.
 
+## Capture aspect ratio and preview framing
+
+The camera preview is centered on screen and constrained to the selected capture aspect ratio -
+**4:3** (default) or **16:9** - rather than stretched to fill the screen; any leftover space is
+filled with the theme's background color. Since the app is locked to portrait only (see
+"Portrait-only orientation" below), typical phone screens are taller/narrower than either ratio's
+portrait mapping (3:4 or 9:16), so in practice this always means letterboxing (bars above/below),
+not pillarboxing. The overlay image (see "Overlay image visibility" above) is a full-screen
+sibling of the preview, entirely unaffected by this - swipe gestures and tap-to-capture are still
+recognized across the *whole* screen, not just the smaller preview area, since the gesture
+detector sits on the outer full-screen layer, not the aspect-ratio-constrained box.
+
+`GrantedCameraContent` in `CameraScreen.kt` computes the preview's on-screen ratio from
+`CaptureAspectRatio.previewRatio(isPortrait)` (a plain function: the landscape ratio as-is in
+landscape, or its rotated height:width counterpart in portrait, read from `LocalConfiguration`) and
+applies it via `Modifier.aspectRatio(...)` on a `Box` centered inside the full-screen container -
+the standard Compose letterbox/pillarbox pattern. `isPortrait` is effectively always `true` now
+that the app is portrait-locked, but the check is deliberately still dynamic (not hardcoded)
+because Android does not strictly guarantee `screenOrientation="portrait"` is honored in every
+multi-window/split-screen/freeform configuration on every OS version - this way the layout still
+picks the correct mapping even in that edge case, rather than assuming portrait unconditionally.
+
+**Preview and capture share the same aspect-ratio preference.** `CameraPreview.kt` applies the
+same `ResolutionSelector`/`AspectRatioStrategy` (`RATIO_4_3_FALLBACK_AUTO_STRATEGY` or
+`RATIO_16_9_FALLBACK_AUTO_STRATEGY`) to both the `Preview` and `ImageCapture` use cases, and binds
+them together through a `UseCaseGroup` with a shared `ViewPort` built from the exact target ratio
+(as a `Rational`, not derived from measured pixels, which would only reconstruct the same ratio
+imprecisely) - so the live preview and the saved photo represent the same effective crop. Since a
+built `ImageCapture`/`Preview`'s resolution selector can't change afterward, switching the aspect
+ratio rebuilds both use cases (`remember(captureAspectRatio)`) and rebinds them
+(`LaunchedEffect(lifecycleOwner, captureMode, captureAspectRatio)`) - the same brief-flicker
+trade-off already accepted for a Burst Mode switch (see "Capture Performance" below).
+
+**Portrait-only orientation.** `MainActivity` declares `android:screenOrientation="portrait"` (see
+"UI requirements" in app-spec.md) - the app's window never rotates into landscape, regardless of
+how the physical device is held.
+
+**Capture rotation is still tracked, using the physical device tilt rather than the (now-frozen)
+window rotation.** Because the window itself never rotates, `Configuration`/
+`ContextCompat.getDisplayOrDefault(context).rotation` no longer change when the user turns the
+device sideways, so `CameraPreview.kt` can't use either to know how the device is actually being
+held - it uses an `OrientationEventListener` instead (raw accelerometer degrees, independent of the
+locked window), mapping its 0-359° reading to a `Surface.ROTATION_*` value via the small pure
+function `surfaceRotationFor` and pushing that onto both use cases' `targetRotation`. This keeps
+captured photos correctly oriented (EXIF tag matches how the phone was actually held) even though
+the on-screen layout itself never rotates. `surfaceRotationFor`'s bucketing (0/90/180/270,
+including the 90-vs-270 swap that `targetRotation`'s "rotate output to appear upright" semantics
+require) is covered directly by `CameraPreviewRotationTest` - a plain JVM test, since the mapping
+is pure arithmetic with no real Android runtime dependency.
+
+**A capture-aspect-ratio change made mid-burst does not affect the active burst.** `CameraViewModel`
+holds an `effectiveCaptureAspectRatio` that normally mirrors the persisted setting immediately, but
+- while `CaptureCoordinator.state` reports a burst in progress (`BurstStarted` seen, `BurstCompleted`
+not yet seen) - holds the previous value instead, only catching up once that burst's
+`BurstCompleted` state arrives. `CameraPreview` (and the preview's layout) only ever sees this
+effective value, so the live camera use cases are never rebuilt mid-burst.
+`CameraViewModelTest`'s `"a capture-aspect-ratio change made mid-burst does not apply until the
+burst completes"` case drives this with `runCurrent()` to pause partway through a burst and assert
+the change is held back.
+
+**Captured-image metadata is logged for every successful capture.** After `CaptureCoordinator`
+finishes writing a photo, it reads the actual saved dimensions back (`ImageMetadataReader`,
+implemented by `AndroidImageMetadataReader` using `BitmapFactory` with `inJustDecodeBounds = true`
+so only the header is decoded, plus a second stream read for the EXIF orientation via
+`androidx.exifinterface.media.ExifInterface`), classifies them with `AspectRatioClassifier`, and
+logs the result via `CaptureMetadataLogger`/`FileCaptureMetadataLogger` (JSON Lines, same pattern
+as `FileCaptureErrorLogger`, to `capture_metadata.log`). `AspectRatioClassifier.classify` uses a
+2% tolerance rather than exact floating-point equality, and normalizes by comparing
+`max(width, height) / min(width, height)`, so a portrait capture classifies identically to its
+landscape rotation (e.g. both `4032x3024` and `3024x4032` classify as `RATIO_4_3`) -
+`AspectRatioClassifierTest` covers the worked examples directly. If the read-back fails (file not
+decodable) or the capture itself failed, nothing is logged - this is diagnostic-only, matching
+"Error Handling" below's principle of never letting a logging concern affect capture itself.
+
 ## Capture Mode and Burst Mode
 
 The camera screen supports two capture modes, chosen on the settings screen (see "Settings"
@@ -369,10 +455,10 @@ A gear icon in the top-right corner of the camera screen (always visible, regard
 permission state) opens a separate, full-screen settings screen (`settings/ui/SettingsScreen.kt`),
 reached and left via `androidx.navigation.compose.NavHost` in `CaptureApp.kt`; the system/gesture
 back action returns to the camera screen normally. The screen's content is vertically scrollable
-(`Modifier.verticalScroll`) now that four settings no longer reliably fit a single screen without
+(`Modifier.verticalScroll`) now that five settings no longer reliably fit a single screen without
 scrolling on every device/test window size.
 
-The settings screen has four controls, all backed by `SettingsRepository` /
+The settings screen has five controls, all backed by `SettingsRepository` /
 `DataStoreSettingsRepository` (Jetpack DataStore Preferences, so values persist across app
 restarts):
 
@@ -386,6 +472,8 @@ restarts):
    (see "Capture Mode and Burst Mode" above).
 4. **Burst interval** - a `Slider` snapped to 250 ms increments from 250 ms to 2 s
    (`AppSettings.BURST_INTERVAL_RANGE_MILLIS`), defaulting to 500 ms.
+5. **Capture aspect ratio** - a `SingleChoiceSegmentedButtonRow` choosing between 4:3 (default)
+   and 16:9 (see "Capture aspect ratio and preview framing" above).
 
 **The picker's own Uri is not kept long-term.** It's tempting to assume the Photo Picker's
 `content://` Uri stays readable indefinitely once granted - no `ContentResolver
@@ -407,8 +495,8 @@ the "settings" `NavHost` destination's back-stack entry, which is popped - cance
 common flow immediately after picking an image (pick it, see the thumbnail update, tap back), and
 a DataStore write still in flight on `viewModelScope` at that moment could be cancelled before it
 durably reached disk, so a freshly-picked image could silently fail to survive an app restart.
-`onVibrationDurationChanged`/`onImageSelected`/`onCaptureModeChanged`/`onBurstIntervalChanged` all
-launch on the injected `@ApplicationScope` `CoroutineScope` instead (the same one `CameraViewModel`
+`onVibrationDurationChanged`/`onImageSelected`/`onCaptureModeChanged`/`onBurstIntervalChanged`/
+`onCaptureAspectRatioChanged` all launch on the injected `@ApplicationScope` `CoroutineScope` instead (the same one `CameraViewModel`
 already uses to release the voice recognizer after `onCleared()`, and to persist overlay
 visibility - see above), which outlives the settings screen. `SettingsViewModelTest`'s `"a selection write survives the view model being
 cleared right afterward"` case reproduces this with a real `ViewModelStore` to guard against a
@@ -541,7 +629,8 @@ Android Studio will offer to regenerate it automatically; from the command line,
 ```
 
 - **Local JVM unit tests** (`app/src/test/...`): `CaptureCoordinatorTest`, `CameraViewModelTest`,
-  `VoiceCommandMatcherTest`, `CapturePermissionsTest`, `SettingsViewModelTest`. Use fakes
+  `VoiceCommandMatcherTest`, `CapturePermissionsTest`, `SettingsViewModelTest`,
+  `AspectRatioClassifierTest`, `CameraPreviewRotationTest`. Use fakes
   (`app/src/test/.../testing/TestDoubles.kt`) rather than a mocking framework, and
   `kotlinx-coroutines-test`'s `StandardTestDispatcher` with an injected `FakeTimeProvider` - no
   real `delay()`s.
@@ -575,9 +664,12 @@ since none of it is fully covered by automated tests:
       in-app runtime prompt, turn the voice switch on and confirm the listening indicator still
       turns on (regression check for a bug where the app never learned the permission was already
       granted and the recognizer silently never started - see `CameraRoute.onVoiceTriggerToggle`).
-- [ ] **Rotation:** rotate the device through all four orientations while the preview is showing;
-      the preview keeps running without a black flash, freeze, or crash; take a photo immediately
-      after rotating.
+- [ ] **Portrait lock:** physically rotate the device through all four orientations while the
+      preview is showing; the app's own layout stays locked to portrait the entire time (it never
+      visually rotates into landscape, even briefly), with no black flash, freeze, or crash; take a
+      photo immediately after rotating with the device held sideways and confirm it opens right
+      side up in the Gallery (not sideways or upside down) - this is the
+      `OrientationEventListener`-based rotation tracking described above, not a UI rotation.
 - [ ] **Permissions:** deny camera permission and confirm a real message (not a blank screen)
       appears; deny it a second time ("don't ask again") and confirm the screen offers to open
       Settings; grant it from Settings and return to the app; repeat for microphone permission via
@@ -622,6 +714,24 @@ since none of it is fully covered by automated tests:
       camera access mid-session) and confirm no error text appears on the camera screen, then pull
       `capture_errors.log` (`adb shell run-as com.example.capture cat files/capture_errors.log`)
       and confirm it contains a well-formed JSON line with the expected fields.
+- [ ] **Aspect-ratio letterboxing:** with 4:3 selected, the preview appears as a centered box with
+      background-colored bars above/below (not stretched to fill the screen, and not pillarboxed -
+      see "Capture aspect ratio and preview framing" for why portrait-only means letterboxing);
+      switching to 16:9 changes the box's proportions accordingly; the overlay image (if visible)
+      still covers the *entire* screen, bars included, unaffected by either ratio.
+- [ ] **Aspect ratio matches the captured photo:** with each ratio selected, take a photo and
+      confirm its framing in the Gallery visually matches what the live preview showed (not a
+      noticeably different crop).
+- [ ] **Capture aspect ratio setting:** moving between 4:3 and 16:9 updates the preview
+      immediately (outside a burst); the value survives an app restart.
+- [ ] **Aspect ratio change during a burst:** start a burst, then immediately switch the capture
+      aspect ratio in Settings before it finishes; the active burst is unaffected (same preview
+      framing, same number of photos), and the new ratio only visibly applies the *next* time a
+      capture is triggered.
+- [ ] **Captured-image metadata logging:** after taking a photo, pull `capture_metadata.log`
+      (`adb shell run-as com.example.capture cat files/capture_metadata.log`) and confirm the
+      newest line's `widthPx`/`heightPx`/`actualAspectRatio` match the photo actually saved, and
+      `requestedAspectRatio`/`matchesTolerance` reflect the setting that was active.
 
 ### Known device-manufacturer differences
 
@@ -757,6 +867,41 @@ resulting APK was installed on a connected physical device where the settings sc
 showing only vibration duration + overlay image with no toggle for it, plus capture mode and burst
 interval), the camera screen, and swipe gestures with no overlay image selected were all exercised
 for real with logcat confirmed free of crashes.
+
+Capture aspect ratio and preview framing were added next, per a further `app-spec.md` update: a
+persisted 4:3/16:9 setting, a letterboxed/pillarboxed preview independent of the still-full-screen
+overlay and gesture layer, matching `ResolutionSelector`/`ViewPort`/`UseCaseGroup` configuration
+for the `Preview` and `ImageCapture` use cases, explicit rotation tracking (since
+`android:configChanges` means `CameraPreview` is never recreated on rotation), a burst-deferred
+"effective" aspect ratio in `CameraViewModel` so a mid-burst setting change can't affect the active
+burst, and post-capture metadata logging (`AndroidImageMetadataReader` + `AspectRatioClassifier` +
+`FileCaptureMetadataLogger`) with tolerance-based, orientation-agnostic ratio classification. This
+added the `androidx.exifinterface:exifinterface` dependency (see "Dependency choices"). One real
+issue surfaced immediately: `androidx.core.util.Rational` doesn't exist - `CameraPreview.kt`'s
+`ViewPort.Builder` needs the platform `android.util.Rational` instead, which `compileDebugKotlin`
+caught right away (`Unresolved reference 'Rational'`) and was a one-line import fix. With that
+fixed, `testDebugUnitTest` (96/96 tests across 8 classes, including a new `AspectRatioClassifierTest`
+covering the worked dimension/ratio examples, new `CaptureCoordinatorTest` cases for metadata
+logging on success/failure/burst, `CameraViewModelTest` cases for aspect-ratio reflection and the
+mid-burst deferral - driven with `runCurrent()` to pause partway through a burst - and new
+`SettingsScreenTest`/`SettingsViewModelTest` cases for the fifth setting), `lintDebug` (0 issues),
+and `assembleDebug` all passed, then the resulting APK was installed on a connected physical
+device with logcat confirmed free of crashes on launch.
+
+The app was then locked to portrait-only orientation, per a further `app-spec.md` update:
+`android:screenOrientation="portrait"` was added to `MainActivity` in `AndroidManifest.xml`, and
+the existing `Configuration`-driven capture-rotation tracking in `CameraPreview.kt` was replaced
+with an `OrientationEventListener`-based one, since a locked window no longer reports a
+`Configuration`/`Display.getRotation()` change when the physical device is turned - the previous
+mechanism would have silently stopped updating `targetRotation` at all once the lock took effect.
+The degrees-to-`Surface.ROTATION_*` bucketing was pulled out into a small pure function
+(`surfaceRotationFor`) specifically so it could be unit-tested directly rather than left as
+manual-only verification like the rest of the rotation behavior. `testDebugUnitTest` (100/100 tests
+across 9 classes, including the new `CameraPreviewRotationTest` covering all four rotation buckets),
+`lintDebug` (0 issues), and `assembleDebug` all passed on the first attempt this time - then the
+resulting APK was installed on a connected physical device, where CameraX's own binding log
+(`SessionConfig`) was inspected via `adb logcat` and confirmed both `Preview` and `ImageCapture`
+shared a single `viewPort`, the camera opened with no errors, and the app launched with no crashes.
 
 The one command genuinely not run is `./gradlew connectedDebugAndroidTest` - no emulator was
 available in this environment (a physical device was connected and used for manual `adb`-driven

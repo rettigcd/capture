@@ -20,7 +20,8 @@ import javax.inject.Singleton
  * capture behavior identical regardless of which input produced the trigger.
  *
  * Deliberately has no Android or Compose imports so it can be constructed and driven from a plain
- * JUnit test with fakes for [CameraCaptureController], [PhotoStorage], and [CaptureErrorLogger].
+ * JUnit test with fakes for [CameraCaptureController], [PhotoStorage], [CaptureErrorLogger],
+ * [ImageMetadataReader], and [CaptureMetadataLogger].
  */
 @Singleton
 class CaptureCoordinator @Inject constructor(
@@ -29,6 +30,8 @@ class CaptureCoordinator @Inject constructor(
     private val timeProvider: TimeProvider,
     private val dispatcherProvider: DispatcherProvider,
     private val errorLogger: CaptureErrorLogger,
+    private val imageMetadataReader: ImageMetadataReader,
+    private val metadataLogger: CaptureMetadataLogger,
 ) {
     private val mutex = Mutex()
 
@@ -52,6 +55,7 @@ class CaptureCoordinator @Inject constructor(
         trigger: CaptureTrigger,
         captureMode: CaptureMode = CaptureMode.SINGLE_SHOT,
         burstIntervalMillis: Long = 0L,
+        captureAspectRatio: CaptureAspectRatio = CaptureAspectRatio.RATIO_4_3,
     ) {
         withContext(dispatcherProvider.default) {
             if (!mutex.tryLock()) return@withContext
@@ -63,8 +67,8 @@ class CaptureCoordinator @Inject constructor(
                 }
                 lastAcceptedAtMillis = now
                 when (captureMode) {
-                    CaptureMode.SINGLE_SHOT -> performSingleShot(trigger, now)
-                    CaptureMode.BURST -> performBurst(trigger, burstIntervalMillis)
+                    CaptureMode.SINGLE_SHOT -> performSingleShot(trigger, now, captureAspectRatio)
+                    CaptureMode.BURST -> performBurst(trigger, burstIntervalMillis, captureAspectRatio)
                 }
             } finally {
                 mutex.unlock()
@@ -72,9 +76,13 @@ class CaptureCoordinator @Inject constructor(
         }
     }
 
-    private suspend fun performSingleShot(trigger: CaptureTrigger, timestampMillis: Long) {
+    private suspend fun performSingleShot(
+        trigger: CaptureTrigger,
+        timestampMillis: Long,
+        captureAspectRatio: CaptureAspectRatio,
+    ) {
         _state.value = CaptureState.Capturing(trigger)
-        val context = CaptureContext(CaptureMode.SINGLE_SHOT, burstImageNumber = null, burstIntervalMillis = null)
+        val context = CaptureContext(CaptureMode.SINGLE_SHOT, burstImageNumber = null, burstIntervalMillis = null, captureAspectRatio)
         _state.value = CaptureState.Completed(performCapture(trigger, timestampMillis, context))
     }
 
@@ -87,12 +95,12 @@ class CaptureCoordinator @Inject constructor(
      * becomes impossible would require throwing, which [performCapture] does not do for ordinary
      * per-image failures.
      */
-    private suspend fun performBurst(trigger: CaptureTrigger, burstIntervalMillis: Long) {
+    private suspend fun performBurst(trigger: CaptureTrigger, burstIntervalMillis: Long, captureAspectRatio: CaptureAspectRatio) {
         _state.value = CaptureState.BurstStarted(trigger)
         val results = mutableListOf<CaptureResult>()
         for (imageNumber in 1..BURST_IMAGE_COUNT) {
             val timestampMillis = timeProvider.currentTimeMillis()
-            val context = CaptureContext(CaptureMode.BURST, imageNumber, burstIntervalMillis)
+            val context = CaptureContext(CaptureMode.BURST, imageNumber, burstIntervalMillis, captureAspectRatio)
             results += performCapture(trigger, timestampMillis, context)
             if (imageNumber < BURST_IMAGE_COUNT) delay(burstIntervalMillis)
         }
@@ -108,7 +116,14 @@ class CaptureCoordinator @Inject constructor(
             ?: return CaptureResult(CaptureOutcome.Failure(GENERIC_STORAGE_ERROR), trigger, timestampMillis)
 
         return when (val outcome = cameraCaptureController.captureTo(entry)) {
-            is CameraCaptureOutcome.Success -> finishSuccessfulCapture(entry, trigger, timestampMillis, context)
+            is CameraCaptureOutcome.Success -> {
+                val result = finishSuccessfulCapture(entry, trigger, timestampMillis, context)
+                val successOutcome = result.outcome
+                if (successOutcome is CaptureOutcome.Success) {
+                    logMetadata(context, successOutcome.uriString, timestampMillis)
+                }
+                result
+            }
             is CameraCaptureOutcome.Failure -> {
                 photoStorage.discardEntry(entry)
                 logError(timestampMillis, context, entry.uriString, "CameraCaptureFailure", outcome.message, outcome.cause)
@@ -166,11 +181,35 @@ class CaptureCoordinator @Inject constructor(
         )
     }
 
-    /** Just the per-capture metadata [logError] needs; not part of the public API. */
+    /**
+     * Best-effort: reads back the actual saved dimensions/orientation and logs them alongside the
+     * requested ratio (see "Captured image metadata and validation" in app-spec.md). If the file
+     * can't be read back, nothing is logged - the capture itself already succeeded from the user's
+     * perspective, so this is diagnostic only, not another failure to report.
+     */
+    private suspend fun logMetadata(context: CaptureContext, uriString: String, timestampMillis: Long) {
+        val metadata = imageMetadataReader.read(uriString) ?: return
+        val actualAspectRatio = AspectRatioClassifier.classify(metadata.widthPx, metadata.heightPx)
+        metadataLogger.log(
+            CaptureMetadataLogEntry(
+                timestampMillis = timestampMillis,
+                widthPx = metadata.widthPx,
+                heightPx = metadata.heightPx,
+                requestedAspectRatio = context.captureAspectRatio,
+                actualAspectRatio = actualAspectRatio,
+                matchesTolerance = actualAspectRatio == context.captureAspectRatio,
+                outputDestination = uriString,
+                exifOrientation = metadata.exifOrientation,
+            ),
+        )
+    }
+
+    /** Just the per-capture metadata [logError]/[logMetadata] need; not part of the public API. */
     private data class CaptureContext(
         val captureMode: CaptureMode,
         val burstImageNumber: Int?,
         val burstIntervalMillis: Long?,
+        val captureAspectRatio: CaptureAspectRatio,
     )
 
     companion object {

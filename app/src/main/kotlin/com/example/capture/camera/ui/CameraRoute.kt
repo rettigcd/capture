@@ -146,6 +146,7 @@ fun CameraRoute(
         cameraPreview = { previewModifier ->
             CameraPreview(
                 captureMode = uiState.captureMode,
+                captureAspectRatio = uiState.captureAspectRatio,
                 modifier = previewModifier,
                 onImageCaptureReady = viewModel::attachImageCapture,
                 onCameraReady = viewModel::attachCamera,

@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.capture.camera.data.CameraControlHolder
 import com.example.capture.camera.data.ImageCaptureUseCaseHolder
+import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureCoordinator
 import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.camera.domain.CaptureOutcome
@@ -69,11 +70,23 @@ class CameraViewModel @Inject constructor(
         ::CaptureVoicePermissionState,
     )
 
+    // Mirrors settingsRepository.settings.captureAspectRatio immediately, *unless* a burst is
+    // currently in progress - in which case it holds the previous value until that burst
+    // completes (see the CaptureCoordinator.state collector in init and "Capture Aspect Ratio and
+    // Preview Framing" in app-spec.md: "changing the setting while a burst is active must not
+    // alter the active burst"). CameraPreview reads this (via CameraUiState), not the raw setting,
+    // so the live camera use cases are never rebuilt/rebound mid-burst.
+    private val effectiveCaptureAspectRatio = MutableStateFlow(CaptureAspectRatio.RATIO_4_3)
+
+    @Volatile
+    private var burstInProgress = false
+
     val uiState: StateFlow<CameraUiState> = combine(
         captureVoicePermissionState,
         settingsRepository.settings,
         overlayVisibilityRepository.overlayVisible,
-    ) { state, settings, overlayVisible ->
+        effectiveCaptureAspectRatio,
+    ) { state, settings, overlayVisible, captureAspectRatio ->
         CameraUiState(
             cameraPermission = state.cameraPermission,
             microphonePermission = state.microphonePermission,
@@ -86,6 +99,7 @@ class CameraViewModel @Inject constructor(
             overlayVisible = overlayVisible && settings.overlayImageUriString != null,
             overlayImageUriString = settings.overlayImageUriString,
             captureMode = settings.captureMode,
+            captureAspectRatio = captureAspectRatio,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), CameraUiState())
 
@@ -128,6 +142,28 @@ class CameraViewModel @Inject constructor(
                 .distinctUntilChanged()
                 .collect { mustDisableFlashAndTorch -> if (mustDisableFlashAndTorch) flashTorchController.disableFlashAndTorch() }
         }
+        // Mirrors the persisted capture-aspect-ratio setting into effectiveCaptureAspectRatio -
+        // except while a burst is in progress, in which case the change is held back (see the
+        // BurstStarted/BurstCompleted branches below) so CameraPreview never rebuilds/rebinds its
+        // CameraX use cases mid-burst.
+        viewModelScope.launch {
+            settingsRepository.settings
+                .map { it.captureAspectRatio }
+                .distinctUntilChanged()
+                .collect { ratio -> if (!burstInProgress) effectiveCaptureAspectRatio.value = ratio }
+        }
+        viewModelScope.launch {
+            captureCoordinator.state.collect { state ->
+                when (state) {
+                    is CaptureState.BurstStarted -> burstInProgress = true
+                    is CaptureState.BurstCompleted -> {
+                        burstInProgress = false
+                        effectiveCaptureAspectRatio.value = settingsRepository.settings.first().captureAspectRatio
+                    }
+                    else -> {}
+                }
+            }
+        }
     }
 
     fun onScreenTouch() = requestCapture(CaptureTrigger.ScreenTouch)
@@ -153,7 +189,12 @@ class CameraViewModel @Inject constructor(
     private fun requestCapture(trigger: CaptureTrigger) {
         viewModelScope.launch {
             val settings = settingsRepository.settings.first()
-            captureCoordinator.requestCapture(trigger, settings.captureMode, settings.burstIntervalMillis)
+            captureCoordinator.requestCapture(
+                trigger,
+                settings.captureMode,
+                settings.burstIntervalMillis,
+                settings.captureAspectRatio,
+            )
         }
     }
 

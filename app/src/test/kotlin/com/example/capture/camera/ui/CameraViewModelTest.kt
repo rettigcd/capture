@@ -3,14 +3,17 @@ package com.example.capture.camera.ui
 import com.example.capture.camera.data.CameraControlHolder
 import com.example.capture.camera.data.ImageCaptureUseCaseHolder
 import com.example.capture.camera.domain.CameraCaptureOutcome
+import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureCoordinator
 import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.permissions.PermissionStatus
 import com.example.capture.settings.domain.AppSettings
 import com.example.capture.testing.FakeCameraCaptureController
 import com.example.capture.testing.FakeCaptureErrorLogger
+import com.example.capture.testing.FakeCaptureMetadataLogger
 import com.example.capture.testing.FakeFlashTorchController
 import com.example.capture.testing.FakeHapticFeedback
+import com.example.capture.testing.FakeImageMetadataReader
 import com.example.capture.testing.FakeOverlayVisibilityRepository
 import com.example.capture.testing.FakePhotoStorage
 import com.example.capture.testing.FakeSettingsRepository
@@ -27,6 +30,7 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
@@ -57,6 +61,8 @@ class CameraViewModelTest {
         overlayVisibility: FakeOverlayVisibilityRepository = FakeOverlayVisibilityRepository(),
         flashTorchController: FakeFlashTorchController = FakeFlashTorchController(),
         errorLogger: FakeCaptureErrorLogger = FakeCaptureErrorLogger(),
+        imageMetadataReader: FakeImageMetadataReader = FakeImageMetadataReader(),
+        metadataLogger: FakeCaptureMetadataLogger = FakeCaptureMetadataLogger(),
         scheduler: TestCoroutineScheduler,
     ): CameraViewModel {
         val dispatcher = StandardTestDispatcher(scheduler)
@@ -66,6 +72,8 @@ class CameraViewModelTest {
             FakeTimeProvider(),
             TestDispatcherProvider(dispatcher),
             errorLogger,
+            imageMetadataReader,
+            metadataLogger,
         )
         val applicationScope = CoroutineScope(dispatcher)
         return CameraViewModel(
@@ -369,6 +377,63 @@ class CameraViewModelTest {
         advanceUntilIdle()
 
         assertThat(flashTorch.disableCallCount).isAtLeast(1)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `uiState reflects the currently configured capture aspect ratio`() = runTest {
+        val settings = FakeSettingsRepository(AppSettings(captureAspectRatio = CaptureAspectRatio.RATIO_16_9))
+        val vm = buildViewModel(settings = settings, scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.captureAspectRatio).isEqualTo(CaptureAspectRatio.RATIO_16_9)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `a capture-aspect-ratio change made mid-burst does not apply until the burst completes`() = runTest {
+        val settings = FakeSettingsRepository(
+            AppSettings(
+                captureMode = CaptureMode.BURST,
+                burstIntervalMillis = 500L,
+                captureAspectRatio = CaptureAspectRatio.RATIO_4_3,
+            ),
+        )
+        val vm = buildViewModel(settings = settings, scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.captureAspectRatio).isEqualTo(CaptureAspectRatio.RATIO_4_3)
+
+        vm.onScreenTouch()
+        runCurrent() // starts the burst and runs it up to its first inter-image delay
+
+        settings.setCaptureAspectRatio(CaptureAspectRatio.RATIO_16_9)
+        runCurrent()
+
+        // Still 4:3: the burst is still in progress, so the new setting hasn't taken effect yet.
+        assertThat(vm.uiState.value.captureAspectRatio).isEqualTo(CaptureAspectRatio.RATIO_4_3)
+
+        advanceUntilIdle() // let the burst finish
+
+        assertThat(vm.uiState.value.captureAspectRatio).isEqualTo(CaptureAspectRatio.RATIO_16_9)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `a capture-aspect-ratio change outside a burst applies immediately`() = runTest {
+        val settings = FakeSettingsRepository(AppSettings(captureAspectRatio = CaptureAspectRatio.RATIO_4_3))
+        val vm = buildViewModel(settings = settings, scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+
+        settings.setCaptureAspectRatio(CaptureAspectRatio.RATIO_16_9)
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.captureAspectRatio).isEqualTo(CaptureAspectRatio.RATIO_16_9)
 
         collectJob.cancel()
     }

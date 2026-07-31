@@ -1,5 +1,6 @@
 package com.example.capture.settings.domain
 
+import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
 import kotlinx.coroutines.flow.Flow
 
@@ -15,4 +16,5 @@ interface SettingsRepository {
     suspend fun setOverlayImageUri(uriString: String?)
     suspend fun setCaptureMode(mode: CaptureMode)
     suspend fun setBurstIntervalMillis(intervalMillis: Long)
+    suspend fun setCaptureAspectRatio(ratio: CaptureAspectRatio)
 }

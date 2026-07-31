@@ -211,7 +211,7 @@ The initial camera screen should include:
 
 Keep the UI intentionally simple. The objective is a clean architectural foundation, not a polished commercial camera interface.
 
-Support portrait and landscape orientation without recreating unsafe camera state.
+The app shall be locked to portrait orientation only (e.g. `android:screenOrientation="portrait"` on the main Activity). The system shall never rotate the app's layout into landscape, regardless of how the physical device is held or which capture aspect ratio is selected - see "Orientation changes" in "Capture Aspect Ratio and Preview Framing" for how this interacts with the aspect-ratio preview mapping.
 
 ## Overlay image visibility
 
@@ -374,22 +374,21 @@ change the visible framing relative to the captured image.
 
 ### Orientation changes
 
-The preview container shall adapt when the device orientation changes.
-
-In portrait orientation:
+The application is locked to portrait orientation only (see "UI requirements") - there is no
+landscape display case to support. The camera preview therefore always uses each ratio's portrait
+mapping:
 
 * 4:3 capture shall display as 3:4.
 * 16:9 capture shall display as 9:16.
 
-In landscape orientation:
+This mapping never changes at runtime, since the app's own layout orientation never changes.
+However, the physical device can still be rotated in the user's hand while the app's layout stays
+locked to portrait; the camera preview, capture rotation, and viewport shall still be updated
+consistently for that physical rotation (so a captured photo has the correct orientation/EXIF tag
+even though the on-screen layout itself never rotates).
 
-* 4:3 capture shall display as 4:3.
-* 16:9 capture shall display as 16:9.
-
-The camera preview, capture rotation, and viewport shall be updated consistently after an
-orientation change.
-
-The overlay image shall continue to fill the entire screen after orientation changes.
+The overlay image shall continue to fill the entire screen regardless of the physical device's
+rotation.
 
 ## Overlay sizing
 
@@ -510,10 +509,9 @@ application shall log the discrepancy but shall not display an on-screen error (
 
 This part of the application is complete when all of the following are true:
 
-1. A 4:3 capture setting produces a centered 4:3 preview in landscape and a centered 3:4 preview
-   in portrait.
-2. A 16:9 capture setting produces a centered 16:9 preview in landscape and a centered 9:16
-   preview in portrait.
+1. A 4:3 capture setting produces a centered 3:4 preview (the app is locked to portrait only -
+   see "UI requirements").
+2. A 16:9 capture setting produces a centered 9:16 preview.
 3. The preview does not stretch to match the phone screen.
 4. The preview framing closely matches the resulting captured image.
 5. The same viewport or crop region is used for preview and capture.
@@ -524,8 +522,8 @@ This part of the application is complete when all of the following are true:
 10. Touch, voice, and volume-button capture continue to work while the overlay is visible.
 11. The selected capture ratio persists across application restarts.
 12. Actual captured dimensions and aspect ratio are recorded in diagnostic logs.
-13. Orientation changes update the camera preview and capture rotation without affecting the
-    overlay's full-screen behavior.
+13. The app stays locked to portrait orientation regardless of how the physical device is
+    rotated, and the overlay's full-screen behavior is unaffected by physical device rotation.
 
 ## Capture Mode
 
@@ -788,7 +786,7 @@ Create a useful `README.md` containing:
 * How to run each test category
 * How to change the voice-command vocabulary
 * How to replace `SpeechRecognizer`
-* Manual test checklist for touch, voice, volume buttons, rotation, permissions, image storage, overlay swipe gestures (smooth gesture-following animation is hard to unit test), Burst Mode (actual device timing between captures, flash/torch staying off, and the single burst-triggered vibration), and capture aspect ratio (letterboxing/pillarboxing at each ratio and orientation, the overlay staying full-screen regardless of the selected ratio, and preview framing matching the captured image)
+* Manual test checklist for touch, voice, volume buttons, the app staying locked to portrait regardless of physical device rotation, permissions, image storage, overlay swipe gestures (smooth gesture-following animation is hard to unit test), Burst Mode (actual device timing between captures, flash/torch staying off, and the single burst-triggered vibration), and capture aspect ratio (letterboxing/pillarboxing at each ratio, the overlay staying full-screen regardless of the selected ratio, and preview framing matching the captured image)
 * Known device-manufacturer differences involving volume keys, camera behavior, and speech recognition
 
 Include a Mermaid component or flow diagram showing:

@@ -11,6 +11,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
 import com.example.capture.R
+import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
 import com.google.common.truth.Truth.assertThat
 import org.junit.Rule
@@ -35,6 +36,7 @@ class SettingsScreenTest {
         onPickImageClick: () -> Unit = {},
         onCaptureModeChanged: (CaptureMode) -> Unit = {},
         onBurstIntervalChanged: (Long) -> Unit = {},
+        onCaptureAspectRatioChanged: (CaptureAspectRatio) -> Unit = {},
         onBack: () -> Unit = {},
     ) {
         composeTestRule.setContent {
@@ -44,6 +46,7 @@ class SettingsScreenTest {
                 onPickImageClick = onPickImageClick,
                 onCaptureModeChanged = onCaptureModeChanged,
                 onBurstIntervalChanged = onBurstIntervalChanged,
+                onCaptureAspectRatioChanged = onCaptureAspectRatioChanged,
                 onBack = onBack,
             )
         }
@@ -113,6 +116,31 @@ class SettingsScreenTest {
             .onNodeWithText(context.getString(R.string.settings_burst_interval_label, 750L))
             .performScrollTo()
             .assertIsDisplayed()
+    }
+
+    @Test
+    fun aspectRatioSegmentedButton_reflectsTheCurrentSelection() {
+        setScreen(SettingsUiState(captureAspectRatio = CaptureAspectRatio.RATIO_16_9))
+
+        composeTestRule
+            .onNodeWithText(context.getString(R.string.settings_aspect_ratio_16_9))
+            .performScrollTo()
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun selecting16x9_invokesCaptureAspectRatioChangedCallback() {
+        var selectedRatio: CaptureAspectRatio? = null
+        setScreen(
+            SettingsUiState(captureAspectRatio = CaptureAspectRatio.RATIO_4_3),
+            onCaptureAspectRatioChanged = { selectedRatio = it },
+        )
+
+        composeTestRule.onNodeWithText(context.getString(R.string.settings_aspect_ratio_16_9))
+            .performScrollTo()
+            .performClick()
+
+        assertThat(selectedRatio).isEqualTo(CaptureAspectRatio.RATIO_16_9)
     }
 
     @Test

@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.settings.domain.AppSettings
 import com.example.capture.settings.domain.SettingsRepository
@@ -27,6 +28,7 @@ class DataStoreSettingsRepository @Inject constructor(
         val OVERLAY_IMAGE_URI = stringPreferencesKey("overlay_image_uri")
         val CAPTURE_MODE = stringPreferencesKey("capture_mode")
         val BURST_INTERVAL_MILLIS = longPreferencesKey("burst_interval_millis")
+        val CAPTURE_ASPECT_RATIO = stringPreferencesKey("capture_aspect_ratio")
     }
 
     override val settings: Flow<AppSettings> = context.settingsDataStore.data.map { preferences ->
@@ -37,6 +39,8 @@ class DataStoreSettingsRepository @Inject constructor(
             captureMode = preferences[Keys.CAPTURE_MODE]?.toCaptureModeOrDefault() ?: CaptureMode.SINGLE_SHOT,
             burstIntervalMillis = preferences[Keys.BURST_INTERVAL_MILLIS]
                 ?: AppSettings.DEFAULT_BURST_INTERVAL_MILLIS,
+            captureAspectRatio = preferences[Keys.CAPTURE_ASPECT_RATIO]?.toCaptureAspectRatioOrDefault()
+                ?: CaptureAspectRatio.RATIO_4_3,
         )
     }
 
@@ -62,8 +66,15 @@ class DataStoreSettingsRepository @Inject constructor(
         context.settingsDataStore.edit { it[Keys.BURST_INTERVAL_MILLIS] = intervalMillis }
     }
 
+    override suspend fun setCaptureAspectRatio(ratio: CaptureAspectRatio) {
+        context.settingsDataStore.edit { it[Keys.CAPTURE_ASPECT_RATIO] = ratio.name }
+    }
+
     // Falls back to the default rather than throwing if a future release ever removes/renames an
     // enum constant and an old value is still on disk.
     private fun String.toCaptureModeOrDefault(): CaptureMode =
         CaptureMode.entries.firstOrNull { it.name == this } ?: CaptureMode.SINGLE_SHOT
+
+    private fun String.toCaptureAspectRatioOrDefault(): CaptureAspectRatio =
+        CaptureAspectRatio.entries.firstOrNull { it.name == this } ?: CaptureAspectRatio.RATIO_4_3
 }

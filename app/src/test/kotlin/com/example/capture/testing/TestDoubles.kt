@@ -2,11 +2,16 @@ package com.example.capture.testing
 
 import com.example.capture.camera.domain.CameraCaptureController
 import com.example.capture.camera.domain.CameraCaptureOutcome
+import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureErrorLogEntry
 import com.example.capture.camera.domain.CaptureErrorLogger
+import com.example.capture.camera.domain.CaptureMetadataLogEntry
+import com.example.capture.camera.domain.CaptureMetadataLogger
 import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.camera.domain.FlashTorchController
 import com.example.capture.camera.domain.HapticFeedback
+import com.example.capture.camera.domain.ImageMetadata
+import com.example.capture.camera.domain.ImageMetadataReader
 import com.example.capture.camera.domain.OverlayVisibilityRepository
 import com.example.capture.camera.domain.PendingPhotoEntry
 import com.example.capture.camera.domain.PhotoStorage
@@ -111,6 +116,10 @@ class FakeSettingsRepository(initial: AppSettings = AppSettings()) : SettingsRep
     override suspend fun setBurstIntervalMillis(intervalMillis: Long) {
         _settings.value = _settings.value.copy(burstIntervalMillis = intervalMillis)
     }
+
+    override suspend fun setCaptureAspectRatio(ratio: CaptureAspectRatio) {
+        _settings.value = _settings.value.copy(captureAspectRatio = ratio)
+    }
 }
 
 class FakeCaptureErrorLogger : CaptureErrorLogger {
@@ -118,6 +127,34 @@ class FakeCaptureErrorLogger : CaptureErrorLogger {
 
     override suspend fun log(entry: CaptureErrorLogEntry) {
         loggedEntries += entry
+    }
+}
+
+class FakeCaptureMetadataLogger : CaptureMetadataLogger {
+    val loggedEntries = mutableListOf<CaptureMetadataLogEntry>()
+
+    override suspend fun log(entry: CaptureMetadataLogEntry) {
+        loggedEntries += entry
+    }
+}
+
+/**
+ * Returns [nextMetadata] (default 4032x3024, a clean 4:3 match) for every [uriString], or `null`
+ * for all reads if [failNextRead] is set - simulating a saved file that can't be read back.
+ */
+class FakeImageMetadataReader(
+    var nextMetadata: ImageMetadata? = ImageMetadata(widthPx = 4032, heightPx = 3024, exifOrientation = 1),
+    var failNextRead: Boolean = false,
+) : ImageMetadataReader {
+    val requestedUris = mutableListOf<String>()
+
+    override suspend fun read(uriString: String): ImageMetadata? {
+        requestedUris += uriString
+        if (failNextRead) {
+            failNextRead = false
+            return null
+        }
+        return nextMetadata
     }
 }
 
