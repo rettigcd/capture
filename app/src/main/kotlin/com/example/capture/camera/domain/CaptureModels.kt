@@ -21,6 +21,22 @@ sealed interface CameraCaptureOutcome {
     ) : CameraCaptureOutcome
 }
 
+/**
+ * Outcome of asking the camera hardware to expose and encode a single frame directly into memory
+ * rather than a [PendingPhotoEntry]'s output stream - used by Burst Mode so MediaStore work never
+ * sits between one image's capture and the next (see "Burst Mode" in app-spec.md).
+ * [Success] is a plain `class`, not `data class`, since [ByteArray]'s structural `equals`/`hashCode`
+ * would be misleading (array identity, not content, is what most callers actually want here).
+ */
+sealed interface CameraCaptureMemoryOutcome {
+    class Success(val jpegBytes: ByteArray) : CameraCaptureMemoryOutcome
+    data class Failure(
+        val message: String,
+        val cause: Throwable? = null,
+        val reason: CaptureRejectionReason = CaptureRejectionReason.UNKNOWN,
+    ) : CameraCaptureMemoryOutcome
+}
+
 /** Outcome of a full capture request, after camera capture and MediaStore finalization. */
 sealed interface CaptureOutcome {
     data class Success(val uriString: String) : CaptureOutcome

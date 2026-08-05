@@ -2,6 +2,7 @@ package com.example.capture.camera.ui
 
 import com.example.capture.camera.data.CameraControlHolder
 import com.example.capture.camera.data.ImageCaptureUseCaseHolder
+import com.example.capture.camera.domain.CameraCaptureMemoryOutcome
 import com.example.capture.camera.domain.CameraCaptureOutcome
 import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureCoordinator
@@ -340,10 +341,10 @@ class CameraViewModelTest {
     @Test
     fun `a burst vibrates exactly once regardless of per-image outcomes`() = runTest {
         var callCount = 0
-        val camera = FakeCameraCaptureController { _ ->
+        val camera = FakeCameraCaptureController(memoryOutcome = { _ ->
             callCount++
-            if (callCount == 2) CameraCaptureOutcome.Failure("simulated failure") else CameraCaptureOutcome.Success
-        }
+            if (callCount == 2) CameraCaptureMemoryOutcome.Failure("simulated failure") else CameraCaptureMemoryOutcome.Success(ByteArray(0))
+        })
         val haptics = FakeHapticFeedback()
         val settings = FakeSettingsRepository(AppSettings(captureMode = CaptureMode.BURST, burstIntervalMillis = 250L))
         val vm = buildViewModel(camera = camera, haptics = haptics, settings = settings, scheduler = testScheduler)
@@ -352,7 +353,7 @@ class CameraViewModelTest {
         vm.onScreenTouch()
         advanceUntilIdle()
 
-        assertThat(camera.captureCount).isEqualTo(4)
+        assertThat(camera.memoryCaptureCount).isEqualTo(4)
         assertThat(haptics.performCaptureSuccessCount).isEqualTo(1)
 
         collectJob.cancel()

@@ -1045,6 +1045,34 @@ as separate fields. `testDebugUnitTest` (112/112 tests across 9 classes - the ex
 `CameraPreviewRotationTest` needed no changes, since `surfaceRotationFor` itself didn't change),
 `lintDebug` (0 issues), and `assembleDebug` all passed.
 
+Burst Mode's shot-to-shot latency was investigated next, using `adb logcat -s CaptureDiagnostics:I`
+against a connected device rather than guessing: with a 250ms configured interval, the actual gap
+between images was ~1000-1200ms. The `CameraXCaptureStarted`→`ImageSaved` diagnostic-event gap
+(700-890ms per image) showed this was overwhelmingly the camera hardware's own capture+JPEG-encode
+latency, not disk I/O as initially suspected - the metadata read-back and MediaStore
+create/finalize calls between images accounted for only ~30ms combined. `CameraCaptureController`
+gained `captureToMemory` (via `ImageCapture.OnImageCapturedCallback`/`ImageProxy` instead of the
+file-based `OnImageSavedCallback`) and `PhotoStorage` gained `writeBytes`; `CaptureCoordinator`'s
+`performBurst` is now two-phase for Burst Mode only (Single-Shot Mode's `captureTo` path is
+unchanged) - phase 1 captures all four images to memory back-to-back with only the configured
+interval between them, phase 2 persists each through MediaStore afterward - so no MediaStore IPC or
+metadata read-back sits between one image's capture and the next. `ImageProxy` turned out to
+implement only `java.lang.AutoCloseable`, not `java.io.Closeable` (confirmed via `javap` against the
+cached `camera-core` jar rather than assumed), so it's closed with a plain `try`/`finally` instead of
+Kotlin's `use`. `testDebugUnitTest` (131/131 tests across 11 classes - existing burst tests were
+updated to drive the new `captureToMemory`/`memoryOutcome` fake path rather than new tests being
+added), `lintDebug` (0 issues), and `assembleDebug` all passed. `installDebug` plus a fresh
+`adb logcat -s CaptureDiagnostics:I` burst trace confirmed the fix empirically: shot-to-shot cadence
+(`CameraXRequestSubmitted`-to-`CameraXRequestSubmitted`, the truest apples-to-apples metric since it
+isolates the capture-phase loop from the persist phase) dropped from ~1186/988/1042ms to
+~926/890/841ms across the three gaps in a 4-image burst - about a 17% reduction (roughly 830ms →
+690ms of per-shot overhead once the fixed 250ms configured interval is subtracted out), with the
+remaining ~590-680ms per image still dominated by the camera hardware's own capture+JPEG-encode
+time (unchanged by this fix, and not something a MediaStore-side change can touch). Total
+Accepted-to-Completed burst duration improved from ~4017ms to ~3548ms. Trimming further would mean
+reducing Burst Mode's capture resolution or capturing at a lower JPEG quality, not further storage
+changes.
+
 The one command genuinely not run is `./gradlew connectedDebugAndroidTest` - no emulator was
 available in this environment (a physical device was connected and used for manual `adb`-driven
 smoke testing instead, which is not the same as running the instrumented test suite), which is

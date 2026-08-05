@@ -47,6 +47,14 @@ class MediaStorePhotoStorage @Inject constructor(
             PendingPhotoEntry(uri.toString())
         }
 
+    override suspend fun writeBytes(entry: PendingPhotoEntry, bytes: ByteArray) {
+        withContext(dispatcherProvider.io) {
+            val stream = context.contentResolver.openOutputStream(entry.uriString.toUri())
+                ?: throw IOException("Could not open storage for the photo.")
+            stream.use { it.write(bytes) }
+        }
+    }
+
     override suspend fun finalizeEntry(entry: PendingPhotoEntry): String =
         withContext(dispatcherProvider.io) {
             val values = ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }

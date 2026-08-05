@@ -158,7 +158,7 @@ class CaptureCoordinatorTest {
 
         sut.requestCapture(CaptureTrigger.ScreenTouch, CaptureMode.BURST, burstIntervalMillis = 500L)
 
-        assertThat(camera.captureCount).isEqualTo(BURST_IMAGE_COUNT)
+        assertThat(camera.memoryCaptureCount).isEqualTo(BURST_IMAGE_COUNT)
         val completed = sut.state.value as CaptureState.BurstCompleted
         assertThat(completed.results).hasSize(BURST_IMAGE_COUNT)
         assertThat(completed.results).isNotEmpty()
@@ -191,21 +191,21 @@ class CaptureCoordinatorTest {
         overlappingJob.join()
 
         // Only the burst's own four images - the overlapping single-shot request never starts.
-        assertThat(camera.captureCount).isEqualTo(BURST_IMAGE_COUNT)
+        assertThat(camera.memoryCaptureCount).isEqualTo(BURST_IMAGE_COUNT)
     }
 
     @Test
     fun `an error on one burst image does not cancel the remaining images`() = runTest {
         var callCount = 0
-        val camera = FakeCameraCaptureController { _ ->
+        val camera = FakeCameraCaptureController(memoryOutcome = { _ ->
             callCount++
-            if (callCount == 2) CameraCaptureOutcome.Failure("simulated failure") else CameraCaptureOutcome.Success
-        }
+            if (callCount == 2) CameraCaptureMemoryOutcome.Failure("simulated failure") else CameraCaptureMemoryOutcome.Success(ByteArray(0))
+        })
         val sut = buildCoordinator(camera, testScheduler = testScheduler)
 
         sut.requestCapture(CaptureTrigger.ScreenTouch, CaptureMode.BURST, burstIntervalMillis = 250L)
 
-        assertThat(camera.captureCount).isEqualTo(BURST_IMAGE_COUNT)
+        assertThat(camera.memoryCaptureCount).isEqualTo(BURST_IMAGE_COUNT)
         val completed = sut.state.value as CaptureState.BurstCompleted
         assertThat(completed.results).hasSize(BURST_IMAGE_COUNT)
         assertThat(completed.results[0].outcome).isInstanceOf(CaptureOutcome.Success::class.java)
@@ -232,10 +232,10 @@ class CaptureCoordinatorTest {
     @Test
     fun `a burst image failure logs its burst image number and configured interval`() = runTest {
         var callCount = 0
-        val camera = FakeCameraCaptureController { _ ->
+        val camera = FakeCameraCaptureController(memoryOutcome = { _ ->
             callCount++
-            if (callCount == 3) CameraCaptureOutcome.Failure("simulated failure") else CameraCaptureOutcome.Success
-        }
+            if (callCount == 3) CameraCaptureMemoryOutcome.Failure("simulated failure") else CameraCaptureMemoryOutcome.Success(ByteArray(0))
+        })
         val errorLogger = FakeCaptureErrorLogger()
         val sut = buildCoordinator(camera, errorLogger = errorLogger, testScheduler = testScheduler)
 

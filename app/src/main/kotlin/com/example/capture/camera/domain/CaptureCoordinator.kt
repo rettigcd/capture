@@ -136,9 +136,14 @@ class CaptureCoordinator @Inject constructor(
      * collector uses to trigger the single burst-accepted vibration described in "Burst Feedback",
      * independent of how many of the [BURST_IMAGE_COUNT] images ultimately succeed. An error on
      * one image does not stop the remaining ones (see "Error Handling"): each is attempted
-     * regardless of prior results, and the coordinator only gives up early if capturing itself
-     * becomes impossible would require throwing, which [performCapture] does not do for ordinary
-     * per-image failures.
+     * regardless of prior results.
+     *
+     * Two-phase, unlike [performSingleShot]/[performCapture]: phase 1 captures all
+     * [BURST_IMAGE_COUNT] images to memory back-to-back (only [burstIntervalMillis] between them -
+     * no MediaStore reservation/write/finalize or metadata read-back in this loop), then phase 2
+     * persists each of them through [PhotoStorage] after the timing-sensitive part is over. This is
+     * what keeps the shot-to-shot cadence close to the camera hardware's own capture latency instead
+     * of that latency plus a MediaStore round trip per image.
      */
     private suspend fun performBurst(
         trigger: CaptureTrigger,
@@ -147,12 +152,18 @@ class CaptureCoordinator @Inject constructor(
         attemptId: CaptureAttemptId,
     ) {
         _state.value = CaptureState.BurstStarted(trigger, attemptId)
-        val results = mutableListOf<CaptureResult>()
+        val captures = mutableListOf<BurstCapture>()
         for (imageNumber in 1..BURST_IMAGE_COUNT) {
             val timestampMillis = timeProvider.currentTimeMillis()
-            val context = CaptureContext(CaptureMode.BURST, imageNumber, burstIntervalMillis, captureAspectRatio, attemptId)
-            results += performCapture(trigger, timestampMillis, context)
+            diagnosticsLogger.logEvent(
+                CaptureDiagnosticEvent.CameraXRequestSubmitted(attemptId, timeProvider.currentTimeMillis(), imageNumber),
+            )
+            val outcome = cameraCaptureController.captureToMemory(attemptId)
+            captures += BurstCapture(imageNumber, timestampMillis, outcome)
             if (imageNumber < BURST_IMAGE_COUNT) delay(burstIntervalMillis)
+        }
+        val results = captures.map { capture ->
+            persistBurstCapture(trigger, burstIntervalMillis, captureAspectRatio, attemptId, capture)
         }
         diagnosticsLogger.logEvent(
             CaptureDiagnosticEvent.Completed(
@@ -162,6 +173,56 @@ class CaptureCoordinator @Inject constructor(
             ),
         )
         _state.value = CaptureState.BurstCompleted(results, trigger)
+    }
+
+    /** One burst image's in-memory capture result, awaiting phase 2's MediaStore persistence. */
+    private data class BurstCapture(
+        val imageNumber: Int,
+        val timestampMillis: Long,
+        val outcome: CameraCaptureMemoryOutcome,
+    )
+
+    private suspend fun persistBurstCapture(
+        trigger: CaptureTrigger,
+        burstIntervalMillis: Long,
+        captureAspectRatio: CaptureAspectRatio,
+        attemptId: CaptureAttemptId,
+        capture: BurstCapture,
+    ): CaptureResult {
+        val context = CaptureContext(CaptureMode.BURST, capture.imageNumber, burstIntervalMillis, captureAspectRatio, attemptId)
+        return when (val outcome = capture.outcome) {
+            is CameraCaptureMemoryOutcome.Failure -> {
+                logError(capture.timestampMillis, context, outputDestination = null, "CameraCaptureFailure", outcome.message, outcome.cause)
+                CaptureResult(CaptureOutcome.Failure(outcome.message), trigger, capture.timestampMillis, attemptId)
+            }
+            is CameraCaptureMemoryOutcome.Success ->
+                persistCapturedBytes(outcome.jpegBytes, trigger, capture.timestampMillis, context)
+        }
+    }
+
+    private suspend fun persistCapturedBytes(
+        jpegBytes: ByteArray,
+        trigger: CaptureTrigger,
+        timestampMillis: Long,
+        context: CaptureContext,
+    ): CaptureResult {
+        val entry = createEntryOrNull(timestampMillis, context)
+            ?: return CaptureResult(CaptureOutcome.Failure(GENERIC_STORAGE_ERROR), trigger, timestampMillis, context.attemptId)
+        try {
+            photoStorage.writeBytes(entry, jpegBytes)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Exception) {
+            photoStorage.discardEntry(entry)
+            logError(timestampMillis, context, entry.uriString, "StorageWriteFailure", GENERIC_STORAGE_ERROR, error)
+            return CaptureResult(CaptureOutcome.Failure(GENERIC_STORAGE_ERROR), trigger, timestampMillis, context.attemptId)
+        }
+        val result = finishSuccessfulCapture(entry, trigger, timestampMillis, context)
+        val successOutcome = result.outcome
+        if (successOutcome is CaptureOutcome.Success) {
+            logMetadata(context, successOutcome.uriString, timestampMillis)
+        }
+        return result
     }
 
     private suspend fun performCapture(

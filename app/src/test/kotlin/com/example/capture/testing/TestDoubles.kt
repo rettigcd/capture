@@ -1,6 +1,7 @@
 package com.example.capture.testing
 
 import com.example.capture.camera.domain.CameraCaptureController
+import com.example.capture.camera.domain.CameraCaptureMemoryOutcome
 import com.example.capture.camera.domain.CameraCaptureOutcome
 import com.example.capture.camera.domain.CameraDiagnosticsSnapshot
 import com.example.capture.camera.domain.CaptureAspectRatio
@@ -52,7 +53,15 @@ class FakeTimeProvider(startMillis: Long = 0L) : TimeProvider {
     override fun currentTimeMillis(): Long = currentMillis
 }
 
+/**
+ * [memoryOutcome] is placed before [outcome] (rather than after) specifically so existing
+ * trailing-lambda call sites - `FakeCameraCaptureController { CameraCaptureOutcome.Failure(...) }`,
+ * which drive Single-Shot Mode's [captureTo] - keep binding to [outcome] (Kotlin's trailing lambda
+ * always targets the *last* parameter). Burst Mode call sites that need to drive [captureToMemory]
+ * pass `memoryOutcome = { ... }` by name instead.
+ */
 class FakeCameraCaptureController(
+    private val memoryOutcome: (Int) -> CameraCaptureMemoryOutcome = { CameraCaptureMemoryOutcome.Success(ByteArray(0)) },
     private val outcome: (PendingPhotoEntry) -> CameraCaptureOutcome = { CameraCaptureOutcome.Success },
 ) : CameraCaptureController {
     var captureCount: Int = 0
@@ -60,20 +69,32 @@ class FakeCameraCaptureController(
     val capturedEntries = mutableListOf<PendingPhotoEntry>()
     val capturedAttemptIds = mutableListOf<CaptureAttemptId>()
 
+    var memoryCaptureCount: Int = 0
+        private set
+    val memoryCapturedAttemptIds = mutableListOf<CaptureAttemptId>()
+
     override suspend fun captureTo(entry: PendingPhotoEntry, attemptId: CaptureAttemptId): CameraCaptureOutcome {
         captureCount++
         capturedEntries += entry
         capturedAttemptIds += attemptId
         return outcome(entry)
     }
+
+    override suspend fun captureToMemory(attemptId: CaptureAttemptId): CameraCaptureMemoryOutcome {
+        memoryCaptureCount++
+        memoryCapturedAttemptIds += attemptId
+        return memoryOutcome(memoryCaptureCount)
+    }
 }
 
 class FakePhotoStorage(
     private var nextId: Int = 0,
     var failCreate: Boolean = false,
+    var failWrite: Boolean = false,
     var failFinalize: Boolean = false,
 ) : PhotoStorage {
     val created = mutableListOf<PendingPhotoEntry>()
+    val writtenBytes = mutableListOf<Pair<PendingPhotoEntry, ByteArray>>()
     val finalized = mutableListOf<PendingPhotoEntry>()
     val discarded = mutableListOf<PendingPhotoEntry>()
 
@@ -82,6 +103,11 @@ class FakePhotoStorage(
         val entry = PendingPhotoEntry("content://fake/photo/${nextId++}")
         created += entry
         return entry
+    }
+
+    override suspend fun writeBytes(entry: PendingPhotoEntry, bytes: ByteArray) {
+        if (failWrite) throw IOException("Fake: unable to write photo bytes")
+        writtenBytes += entry to bytes
     }
 
     override suspend fun finalizeEntry(entry: PendingPhotoEntry): String {
