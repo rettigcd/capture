@@ -73,6 +73,17 @@ sealed interface CaptureState {
      */
     data class BurstStarted(val trigger: CaptureTrigger, val attemptId: CaptureAttemptId) : CaptureState
 
+    /**
+     * Emitted once per image, right after its camera capture finishes (whether that succeeded or
+     * failed - see "Error Handling" in app-spec.md: one image's failure doesn't stop the remaining
+     * ones) - deliberately *not* after it's persisted to MediaStore, since [CaptureCoordinator]'s
+     * capture phase is where nearly all of a burst's wall-clock time is actually spent, which is
+     * what makes this a useful progress indicator (see "Capture Progress Indicator" in app-spec.md)
+     * rather than four steps that all land within the same instant. [imagesCompleted] counts up from
+     * 1 to [BURST_IMAGE_COUNT] inclusive.
+     */
+    data class BurstProgress(val imagesCompleted: Int, val trigger: CaptureTrigger, val attemptId: CaptureAttemptId) : CaptureState
+
     /** Emitted once all [BURST_IMAGE_COUNT] images have been attempted, in capture order. */
     data class BurstCompleted(val results: List<CaptureResult>, val trigger: CaptureTrigger) : CaptureState
 }

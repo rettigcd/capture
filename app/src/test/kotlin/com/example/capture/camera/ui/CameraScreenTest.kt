@@ -138,24 +138,59 @@ class CameraScreenTest {
     }
 
     @Test
-    fun captureInProgress_isRepresentedInTheStatusIndicator() {
+    fun captureProgressIndicator_isHidden_whenNoCaptureIsInFlight() {
         setScreen(
-            CameraUiState(cameraPermission = PermissionStatus.GRANTED, captureStatus = CaptureStatusUi.Capturing),
+            CameraUiState(cameraPermission = PermissionStatus.GRANTED, captureProgress = CaptureProgressUi.Hidden),
         )
 
-        composeTestRule.onNodeWithText(context.getString(R.string.capture_status_capturing)).assertIsDisplayed()
+        assertThat(
+            composeTestRule.onAllNodesWithContentDescription(
+                context.getString(R.string.capture_progress_indicator_content_description),
+            ).fetchSemanticsNodes(atLeastOneRootRequired = false),
+        ).isEmpty()
     }
 
     @Test
-    fun captureFailure_isNotShownOnScreen_andStatusFallsBackToIdle() {
-        // Capture and file-saving errors are logged, not shown on the main camera screen - see
-        // "Error Handling" in app-spec.md. CaptureStatusUi has no Failed variant at all, so a
-        // failure simply reads as Idle.
+    fun captureProgressIndicator_isShown_forAnIndeterminateSingleShotCapture() {
         setScreen(
-            CameraUiState(cameraPermission = PermissionStatus.GRANTED, captureStatus = CaptureStatusUi.Idle),
+            CameraUiState(cameraPermission = PermissionStatus.GRANTED, captureProgress = CaptureProgressUi.Indeterminate),
         )
 
-        composeTestRule.onNodeWithText(context.getString(R.string.capture_status_idle)).assertIsDisplayed()
+        composeTestRule
+            .onNodeWithContentDescription(context.getString(R.string.capture_progress_indicator_content_description))
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun captureProgressIndicator_isShown_forADeterminateBurstStep() {
+        setScreen(
+            CameraUiState(
+                cameraPermission = PermissionStatus.GRANTED,
+                captureProgress = CaptureProgressUi.Determinate(completedSteps = 2, totalSteps = 4),
+            ),
+        )
+
+        composeTestRule
+            .onNodeWithContentDescription(context.getString(R.string.capture_progress_indicator_content_description))
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun captureProgressIndicator_staysVisible_whileThePrivacyOverlayIsShown() {
+        // Unlike the shutter button (which hides underneath the overlay image), the capture
+        // progress indicator sits above it - see "Capture Progress Indicator" in app-spec.md.
+        setScreen(
+            CameraUiState(
+                cameraPermission = PermissionStatus.GRANTED,
+                overlayVisible = true,
+                overlayImageUriString = "content://fake/overlay",
+                captureProgress = CaptureProgressUi.Determinate(completedSteps = 1, totalSteps = 4),
+            ),
+        )
+
+        composeTestRule
+            .onNodeWithContentDescription(context.getString(R.string.capture_progress_indicator_content_description))
+            .assertIsDisplayed()
     }
 
     @Test
@@ -194,13 +229,12 @@ class CameraScreenTest {
     }
 
     @Test
-    fun statusIndicatorAndShutterButton_areHidden_whileTheOverlayIsShown() {
+    fun shutterButton_isHidden_whileTheOverlayIsShown() {
         setScreen(
             CameraUiState(
                 cameraPermission = PermissionStatus.GRANTED,
                 overlayVisible = true,
                 overlayImageUriString = "content://fake/overlay",
-                captureStatus = CaptureStatusUi.Saved,
             ),
         )
 
@@ -209,14 +243,10 @@ class CameraScreenTest {
                 context.getString(R.string.shutter_button_content_description),
             ).fetchSemanticsNodes(atLeastOneRootRequired = false),
         ).isEmpty()
-        assertThat(
-            composeTestRule.onAllNodesWithText(context.getString(R.string.capture_status_saved))
-                .fetchSemanticsNodes(atLeastOneRootRequired = false),
-        ).isEmpty()
     }
 
     @Test
-    fun statusIndicatorAndShutterButton_reappear_whenSwitchedBackToTheLivePreview() {
+    fun shutterButton_reappears_whenSwitchedBackToTheLivePreview() {
         setScreen(
             CameraUiState(
                 cameraPermission = PermissionStatus.GRANTED,
@@ -228,7 +258,6 @@ class CameraScreenTest {
         composeTestRule.onNodeWithContentDescription(
             context.getString(R.string.shutter_button_content_description),
         ).assertIsDisplayed()
-        composeTestRule.onNodeWithText(context.getString(R.string.capture_status_idle)).assertIsDisplayed()
     }
 
     @Test

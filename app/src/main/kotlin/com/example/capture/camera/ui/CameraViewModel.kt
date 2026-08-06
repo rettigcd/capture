@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.capture.camera.data.CameraControlHolder
 import com.example.capture.camera.data.ImageCaptureUseCaseHolder
+import com.example.capture.camera.domain.BURST_IMAGE_COUNT
 import com.example.capture.camera.domain.CameraDiagnosticsSnapshot
 import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureCoordinator
@@ -109,7 +110,7 @@ class CameraViewModel @Inject constructor(
         CameraUiState(
             cameraPermission = state.cameraPermission,
             microphonePermission = state.microphonePermission,
-            captureStatus = state.capture.toCaptureStatusUi(),
+            captureProgress = state.capture.toCaptureProgressUi(),
             voiceTriggerEnabled = state.voiceTriggerEnabled,
             voiceListening = state.voice is VoiceRecognitionState.Listening,
             voiceError = (state.voice as? VoiceRecognitionState.Error)?.error?.toUserMessageOrNull(),
@@ -135,8 +136,8 @@ class CameraViewModel @Inject constructor(
         // per image in it - see CaptureState.BurstStarted's kdoc and "Burst Feedback" in
         // app-spec.md) - a dedicated collector rather than deriving it inside the `uiState`
         // combine above, since that combine re-runs on every unrelated upstream emission (e.g. a
-        // voice-state change) and would otherwise repeat the pulse for as long as captureStatus
-        // stays Saved.
+        // voice-state change) and would otherwise repeat the pulse for as long as the raw
+        // CaptureState stays in a completed state.
         viewModelScope.launch {
             captureCoordinator.state.collect { state ->
                 val shouldVibrate = when (state) {
@@ -202,6 +203,9 @@ class CameraViewModel @Inject constructor(
                             lastCaptureAttemptId = state.attemptId,
                             lastCaptureTriggerSource = state.trigger.toDiagnosticSource(),
                         )
+                    }
+                    is CaptureState.BurstProgress -> _diagnosticsOverlayInfo.update {
+                        it.copy(captureState = "BurstProgress:${state.imagesCompleted}/$BURST_IMAGE_COUNT")
                     }
                     is CaptureState.Completed -> _diagnosticsOverlayInfo.update {
                         it.copy(captureState = if (state.result.outcome is CaptureOutcome.Success) "Completed:Success" else "Completed:Failure")
@@ -323,19 +327,16 @@ private data class CaptureVoicePermissionState(
 )
 
 /**
- * Deliberately carries no per-outcome detail beyond idle/capturing/saved: capture and
- * file-saving errors (single-shot or within a burst) are logged, not shown on screen - see
- * "Error Handling" in app-spec.md and [CaptureStatusUi]'s kdoc.
+ * Drives [CaptureProgressIndicator]: an indeterminate spinner for the whole of Single-Shot Mode's
+ * capture, a determinate one that starts at 0 of [BURST_IMAGE_COUNT] the instant a burst is
+ * accepted and advances by one step per [CaptureState.BurstProgress] emission, and hidden the rest
+ * of the time (see "Capture Progress Indicator" in app-spec.md).
  */
-private fun CaptureState.toCaptureStatusUi(): CaptureStatusUi = when (this) {
-    CaptureState.Idle -> CaptureStatusUi.Idle
-    is CaptureState.Capturing, is CaptureState.BurstStarted -> CaptureStatusUi.Capturing
-    is CaptureState.Completed -> when (result.outcome) {
-        is CaptureOutcome.Success -> CaptureStatusUi.Saved
-        is CaptureOutcome.Failure -> CaptureStatusUi.Idle
-    }
-    is CaptureState.BurstCompleted ->
-        if (results.any { it.outcome is CaptureOutcome.Success }) CaptureStatusUi.Saved else CaptureStatusUi.Idle
+private fun CaptureState.toCaptureProgressUi(): CaptureProgressUi = when (this) {
+    is CaptureState.Capturing -> CaptureProgressUi.Indeterminate
+    is CaptureState.BurstStarted -> CaptureProgressUi.Determinate(0, BURST_IMAGE_COUNT)
+    is CaptureState.BurstProgress -> CaptureProgressUi.Determinate(imagesCompleted, BURST_IMAGE_COUNT)
+    CaptureState.Idle, is CaptureState.Completed, is CaptureState.BurstCompleted -> CaptureProgressUi.Hidden
 }
 
 /**

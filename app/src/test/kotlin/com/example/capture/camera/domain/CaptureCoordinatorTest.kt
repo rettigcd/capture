@@ -171,6 +171,25 @@ class CaptureCoordinatorTest {
     }
 
     @Test
+    fun `burst mode reports progress once per image, in order, right after each is captured`() = runTest {
+        val camera = FakeCameraCaptureController()
+        val sut = buildCoordinator(camera, testScheduler = testScheduler)
+
+        sut.state.test {
+            assertThat(awaitItem()).isEqualTo(CaptureState.Idle)
+
+            sut.requestCapture(CaptureTrigger.ScreenTouch, CaptureMode.BURST, burstIntervalMillis = 250L)
+
+            assertThat(awaitItem()).isInstanceOf(CaptureState.BurstStarted::class.java)
+            for (expectedCount in 1..BURST_IMAGE_COUNT) {
+                val progress = awaitItem() as CaptureState.BurstProgress
+                assertThat(progress.imagesCompleted).isEqualTo(expectedCount)
+            }
+            assertThat(awaitItem()).isInstanceOf(CaptureState.BurstCompleted::class.java)
+        }
+    }
+
+    @Test
     fun `burst mode spaces captures by the configured interval when capture itself is instant`() = runTest {
         val camera = FakeCameraCaptureController()
         val sut = buildCoordinator(camera, testScheduler = testScheduler)

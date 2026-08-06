@@ -1120,6 +1120,83 @@ same resolution) - about a further 47% reduction - and Accepted-to-Completed bur
 Burst Mode resolution, clock-anchored scheduling), average shot-to-shot cadence went from ~1072ms to
 ~276ms - a roughly 74% reduction overall.
 
+A capture progress indicator was added next: a standalone control, rendered above the privacy
+overlay (unlike the existing small capture-status badge, which hides underneath it), showing an
+indeterminate spinner for the whole of a Single-Shot Mode capture, or a determinate one that
+advances in four 25% steps as each Burst Mode image finishes. `CaptureState` gained a `BurstProgress`
+case; `CameraUiState` gained a `captureProgress: CaptureProgressUi` field (`Hidden`/`Indeterminate`/
+`Determinate(completedSteps, totalSteps)`), computed from the raw `CaptureState` already available
+in `CameraViewModel`'s `uiState` combine. A live-sequence test asserting all four `BurstProgress`
+values arrive in order, via the same Turbine pattern the existing single-shot state-transition test
+already used, passed on the first try despite the fakes having no genuine suspension point between
+images. `testDebugUnitTest` (123/123 tests across 10 classes, including 7 new cases spanning the
+coordinator, ViewModel, and screen layers), `lintDebug` (0 issues), and `assembleDebug` all passed -
+but real usage immediately surfaced a UX problem the unit tests hadn't caught: in Burst Mode, only a
+plain spinner was visible, never four distinct steps.
+
+The root cause was where `BurstProgress` fired from: `performBurst`'s *persist* phase, on the
+reasoning that "an image isn't done until it's saved." That phase, however, is exactly what this
+session's earlier MediaStore-deferral work made nearly instantaneous (no per-image delay, just
+MediaStore IPC) - so all four progress steps landed within a fraction of a second of each other, at
+the very end of an ~1.3s burst, reading as "stuck at 0%, then a flash" rather than four visible
+steps. The fix was to move the emission to the *capture* phase instead, the phase
+`burstIntervalMillis` actually paces, so each step is now visibly spaced out in real time as each
+image is captured, not persisted.
+
+That fix immediately broke two previously-passing `CameraViewModelTest` cases (haptics-on-burst-start
+and mid-burst aspect-ratio deferral), which turned out to be a real, previously-latent bug the earlier
+Turbine-based test had masked, not a test-only artifact: `BurstStarted` and the new `BurstProgress(1)`
+now fire back-to-back with zero suspension between them (image 1 never waits), and `StateFlow`
+conflates - a collector not already actively waiting on the exact instant `BurstStarted` is set can
+miss it completely, not merely observe it briefly, if it's overwritten before that collector's
+`launch { flow.collect { ... } }` gets its next turn on the dispatcher. `CameraViewModel`'s several
+`captureCoordinator.state` collectors (haptics, burst-in-progress tracking, the debug overlay) are
+exactly this ordinary `launch`-based shape, unlike the Turbine test, which collects the coordinator's
+`state` with an eager/undispatched start that happens to catch every value regardless. The fix -
+`yield()` after `BurstStarted` and after every `BurstProgress` - gives the dispatcher a guaranteed
+chance to run any already-queued collector before the coordinator can overwrite that value with the
+next one; it costs no virtual or real time, only scheduling order. This is a real general lesson
+about `CaptureCoordinator.state`, not specific to this feature: a producer that writes to a
+`MutableStateFlow` multiple times with no suspension in between can silently drop values for some
+subscriber shapes and not others, and burst mode is exactly where the coordinator's own performance
+work has made that gap shrink to zero. The mid-burst `CameraViewModelTest` needed one more
+update, unrelated to the race: it had asserted progress was still 0/4 at the point `runCurrent()`
+reaches the first inter-image delay, when with the phase-1 fix that point is now 1/4 (image 1 has
+already been captured by then). `testDebugUnitTest`, `lintDebug`, and `assembleDebug` all passed
+again once both fixes were in.
+
+The small textual capture-status indicator (the "Ready" / "Capturing…" / "Photo saved" badge with a
+tiny inline spinner, shown at top-center and hidden while the privacy overlay was up) was then
+removed outright, now that the capture progress indicator covers the same "something is happening"
+signal without any text. `CaptureStatusUi` and `CameraUiState.captureStatus` were deleted rather than
+just unwired, since their only other consumer - a diagnostic-only `cameraAcceptingCaptureRequests`
+flag on `GestureDiagnosticEvent.Cancelled` - turned out to be logically identical to
+`captureProgress == CaptureProgressUi.Hidden` and was rewritten in terms of that instead, leaving
+nothing referencing the old type. `app-spec.md`'s "UI requirements", "Overlay image visibility", and
+overlay-layering sections were reconciled to match - the layer diagram now shows the progress
+indicator as the one element above the overlay image rather than listing the now-gone status
+indicator among the things it covers. Two `CameraScreenTest` cases that tested the removed
+indicator's text directly were deleted; two more that exercised both it and the shutter button
+together were narrowed to just the shutter button and renamed accordingly; four `CameraViewModelTest`
+assertions against the removed `captureStatus` field were rewritten to check
+`captureProgress == Hidden` instead, which was still a meaningful check at each of those call sites
+(confirming the indicator clears after a capture completes, successfully or not). `testDebugUnitTest`
+(121/121 tests across 10 classes - two fewer than before, from the deleted CameraScreenTest cases),
+`lintDebug` (0 issues, confirming the removed string resources were the only references), and
+`assembleDebug` all passed.
+
+The debug and settings icons were then found (via real device testing) to overlap the status
+bar/camera-cutout area - the root cause is Android 15+ (API 35+) enforcing edge-to-edge by default
+for this app's `targetSdk` (37), regardless of anything explicit in `MainActivity`, so content draws
+behind system bars unless it insets itself; neither icon had ever accounted for that. Both gained
+`.statusBarsPadding()` ahead of their existing fixed `8.dp` padding, and `VoiceTriggerControl` (whose
+existing fixed `72.dp` top offset exists specifically to clear the settings icon) gained the same
+`.statusBarsPadding()` first, so that fixed offset keeps working regardless of the actual status
+bar/notch height on a given device rather than assuming a specific one. `testDebugUnitTest` (still
+121/121 - Robolectric resolves `statusBarsPadding()` to zero inset in the absence of a real window,
+so no existing assertions were affected), `lintDebug` (0 issues), and `assembleDebug` all passed;
+confirmed fixed via `installDebug` on the connected device.
+
 The one command genuinely not run is `./gradlew connectedDebugAndroidTest` - no emulator was
 available in this environment (a physical device was connected and used for manual `adb`-driven
 smoke testing instead, which is not the same as running the instrumented test suite), which is

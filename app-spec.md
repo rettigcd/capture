@@ -200,7 +200,7 @@ A single application module is acceptable for this startup project. Organize the
 The initial camera screen should include:
 
 * A camera preview centered within the camera screen and constrained to the selected capture aspect ratio, letterboxed or pillarboxed as needed rather than stretched to fill the screen (see "Capture Aspect Ratio and Preview Framing")
-* Small capture-status indicator (hidden while Overlay View is shown - see "Overlay image visibility")
+* Capture progress indicator - spinner for Single-Shot Mode, four-step progress for Burst Mode - shown above Overlay View rather than hidden by it (see "Capture Progress Indicator"). No textual capture status ("Capturing…" / "Photo saved" or similar) is shown anywhere on screen.
 * Voice-listening indicator
 * Voice-trigger enable/disable control
 * Permission and permission-related error messages (capture and file-saving errors are not shown on this screen - see "Error Handling")
@@ -238,11 +238,14 @@ triggers (touch, volume buttons, voice command) must keep working exactly as bef
 overlay image is shown in place of the preview, so this doubles as a discreet/privacy display
 mode, not merely a cosmetic one.
 
-While Overlay View is shown, the capture-status indicator (the "Capturing…" / "Photo saved"
-control) and the visible shutter button must both be hidden - conceptually they sit
-underneath the overlay image, so the image fully covers them, not just the camera preview. Capture
+While Overlay View is shown, the visible shutter button must be hidden - conceptually it sits
+underneath the overlay image, so the image fully covers it, not just the camera preview. Capture
 must still work by tapping anywhere on the overlay image even though the shutter button isn't
-visible. Switching back to Camera Preview must make both controls visible again.
+visible. Switching back to Camera Preview must make it visible again.
+
+The capture progress indicator (see "Capture Progress Indicator") is a deliberate exception to
+this: it sits above the overlay image, not underneath it, and stays visible during a capture
+regardless of which mode the screen is in.
 
 The application shall remember whether Overlay View or Camera Preview was showing when the app was
 last closed, and restore that same mode automatically the next time the app is launched. This
@@ -410,17 +413,20 @@ Conceptual layer order:
 ```text
 Full-screen root container
 ├── centered camera preview constrained to capture aspect ratio
-├── camera controls and status indicators
-└── full-screen overlay image
+├── other camera controls
+├── full-screen overlay image
+└── capture progress indicator
 ```
 
 When Overlay View is shown, the overlay image shall appear above:
 
 * the camera preview
 * unused preview background areas
-* the capture-status indicator
 * the visible shutter control
 * all other camera-screen content
+
+except the capture progress indicator (see "Capture Progress Indicator"), which is the one element
+that appears above the overlay image instead.
 
 The camera shall remain active underneath the overlay image, and capture shall remain available
 through the supported touch, voice, and volume-button triggers - consistent with "Overlay image
@@ -600,6 +606,26 @@ vibration duration as Single-Shot Mode's capture-success pulse (see "Settings").
 This single vibration indicates only that the application accepted and started the burst request -
 it does not indicate that all four images were successfully captured or saved. The application must
 not vibrate separately for each image in the burst.
+
+## Capture Progress Indicator
+
+A standard progress control is shown while a capture is in progress, rendered above the privacy
+overlay image (see "Overlay image visibility") - it must remain visible even while the overlay is
+covering the live preview, unlike the rest of the capture-status UI, which hides along with the
+preview it's describing.
+
+It has two modes, matching Capture Mode:
+
+* **Single-Shot Mode**: an indeterminate spinner (in continuous motion, no specific completion
+  fraction) appears the moment a single-shot capture begins, and disappears once that capture
+  completes.
+* **Burst Mode**: a determinate progress control appears the moment a burst is accepted, starting
+  at 0%. It advances in four equal 25% steps as each of the burst's four images finishes, reaching
+  100% once the fourth image is done, then disappears once the burst is completely finished.
+
+Like the rest of the capture-status UI (see "Error Handling"), this indicator carries no
+success/failure detail - it only reflects that a capture is in progress and, for Burst Mode, how
+far along it is.
 
 ## Flash and Torch Restrictions
 

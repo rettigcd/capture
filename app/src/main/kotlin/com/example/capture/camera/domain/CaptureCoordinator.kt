@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -144,6 +145,13 @@ class CaptureCoordinator @Inject constructor(
      * read-back in this loop), then phase 2 persists each of them through [PhotoStorage] after the
      * timing-sensitive part is over. This is what keeps the shot-to-shot cadence close to the camera
      * hardware's own capture latency instead of that latency plus a MediaStore round trip per image.
+     * [CaptureState.BurstProgress] is fired once per image during phase 1, not phase 2: phase 2 is
+     * now fast enough (no per-image delay, just MediaStore IPC - see README's "Build verification")
+     * that all four of its progress steps land within a fraction of a second of each other, which
+     * reads as "stuck, then a flash" rather than four visible steps (see "Capture Progress
+     * Indicator" in app-spec.md) - phase 1 is where nearly all of a burst's wall-clock time actually
+     * goes, so that's where a step needs to be visibly paced by [burstIntervalMillis] to be useful as
+     * a progress indicator at all.
      *
      * The capture-phase loop is clock-anchored to a fixed schedule (`burstStart + n *
      * burstIntervalMillis`) rather than unconditionally `delay(burstIntervalMillis)`-ing after each
@@ -163,6 +171,7 @@ class CaptureCoordinator @Inject constructor(
         attemptId: CaptureAttemptId,
     ) {
         _state.value = CaptureState.BurstStarted(trigger, attemptId)
+        yield() // see the yield() below for why this is here
         val captures = mutableListOf<BurstCapture>()
         var nextShotAtMillis = timeProvider.currentTimeMillis()
         for (imageNumber in 1..BURST_IMAGE_COUNT) {
@@ -175,6 +184,16 @@ class CaptureCoordinator @Inject constructor(
             )
             val outcome = cameraCaptureController.captureToMemory(attemptId)
             captures += BurstCapture(imageNumber, timestampMillis, outcome)
+            _state.value = CaptureState.BurstProgress(imageNumber, trigger, attemptId)
+            // Image N+1 (or the persist phase after image 4) can follow with zero further
+            // suspension whenever the camera keeps pace with burstIntervalMillis - this yield()
+            // guarantees every regular (non-Turbine-style) StateFlow.collect()-based observer, like
+            // CameraViewModel's several `viewModelScope.launch { captureCoordinator.state.collect
+            // { ... } }` blocks, gets scheduled to actually see *this* value before it can be
+            // conflated away by the next one. Without it, a collector could miss BurstStarted or an
+            // intermediate BurstProgress step entirely - not just render it briefly, but never
+            // observe it at all (see README's "Build verification" for how this was found).
+            yield()
         }
         val results = captures.map { capture ->
             persistBurstCapture(trigger, burstIntervalMillis, captureAspectRatio, attemptId, capture)

@@ -8,9 +8,7 @@
     <string name="voice_listening_indicator">Listening for a voice command</string>
     <string name="voice_not_listening_indicator">Voice capture is off</string>
 
-    <string name="capture_status_idle">Ready</string>
-    <string name="capture_status_capturing">Capturing…</string>
-    <string name="capture_status_saved">Photo saved</string>
+    <string name="capture_progress_indicator_content_description">Capture in progress</string>
 
     <string name="permission_camera_rationale">Capture needs camera access to show the live preview and take photos.</string>
     <string name="permission_camera_denied">Camera permission was denied. Grant it in Settings to use Capture.</string>

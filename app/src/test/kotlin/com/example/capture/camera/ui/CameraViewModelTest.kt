@@ -2,6 +2,7 @@ package com.example.capture.camera.ui
 
 import com.example.capture.camera.data.CameraControlHolder
 import com.example.capture.camera.data.ImageCaptureUseCaseHolder
+import com.example.capture.camera.domain.BURST_IMAGE_COUNT
 import com.example.capture.camera.domain.CameraCaptureMemoryOutcome
 import com.example.capture.camera.domain.CameraCaptureOutcome
 import com.example.capture.camera.domain.CaptureAspectRatio
@@ -109,7 +110,7 @@ class CameraViewModelTest {
         val collectJob = launch { vm.uiState.collect {} }
         advanceUntilIdle()
 
-        assertThat(vm.uiState.value.captureStatus).isEqualTo(CaptureStatusUi.Idle)
+        assertThat(vm.uiState.value.captureProgress).isEqualTo(CaptureProgressUi.Hidden)
         assertThat(vm.uiState.value.cameraPermission).isEqualTo(PermissionStatus.NOT_DETERMINED)
         assertThat(vm.uiState.value.voiceTriggerEnabled).isFalse()
 
@@ -127,7 +128,7 @@ class CameraViewModelTest {
         advanceUntilIdle()
 
         assertThat(camera.captureCount).isEqualTo(1)
-        assertThat(vm.uiState.value.captureStatus).isEqualTo(CaptureStatusUi.Saved)
+        assertThat(vm.uiState.value.captureProgress).isEqualTo(CaptureProgressUi.Hidden)
         assertThat(haptics.performCaptureSuccessCount).isEqualTo(1)
         assertThat(haptics.recordedDurationsMillis).containsExactly(AppSettings.DEFAULT_VIBRATION_DURATION_MILLIS)
 
@@ -161,7 +162,7 @@ class CameraViewModelTest {
         vm.onScreenTouch()
         advanceUntilIdle()
 
-        assertThat(vm.uiState.value.captureStatus).isEqualTo(CaptureStatusUi.Idle)
+        assertThat(vm.uiState.value.captureProgress).isEqualTo(CaptureProgressUi.Hidden)
         assertThat(haptics.performCaptureSuccessCount).isEqualTo(0)
         assertThat(errorLogger.loggedEntries).isNotEmpty()
 
@@ -208,7 +209,7 @@ class CameraViewModelTest {
         advanceUntilIdle()
 
         assertThat(camera.captureCount).isEqualTo(1)
-        assertThat(vm.uiState.value.captureStatus).isEqualTo(CaptureStatusUi.Saved)
+        assertThat(vm.uiState.value.captureProgress).isEqualTo(CaptureProgressUi.Hidden)
 
         collectJob.cancel()
     }
@@ -355,6 +356,44 @@ class CameraViewModelTest {
 
         assertThat(camera.memoryCaptureCount).isEqualTo(4)
         assertThat(haptics.performCaptureSuccessCount).isEqualTo(1)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `captureProgress is hidden before any capture and again once one completes`() = runTest {
+        val vm = buildViewModel(scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.captureProgress).isEqualTo(CaptureProgressUi.Hidden)
+
+        vm.onScreenTouch()
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.captureProgress).isEqualTo(CaptureProgressUi.Hidden)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `captureProgress advances to one of four as soon as the first image is captured`() = runTest {
+        // Progress is reported from the capture phase (see CaptureCoordinator.performBurst's
+        // kdoc), so by the time execution reaches the first inter-image delay - the earliest point
+        // runCurrent() can pause it at - image 1 has already been captured and counted.
+        val settings = FakeSettingsRepository(AppSettings(captureMode = CaptureMode.BURST, burstIntervalMillis = 500L))
+        val vm = buildViewModel(settings = settings, scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+
+        vm.onScreenTouch()
+        runCurrent() // starts the burst, captures image 1, and runs up to its first inter-image delay
+
+        assertThat(vm.uiState.value.captureProgress).isEqualTo(CaptureProgressUi.Determinate(1, BURST_IMAGE_COUNT))
+
+        advanceUntilIdle() // let the burst finish
+
+        assertThat(vm.uiState.value.captureProgress).isEqualTo(CaptureProgressUi.Hidden)
 
         collectJob.cancel()
     }

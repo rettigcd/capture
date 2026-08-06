@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Camera
@@ -116,6 +117,12 @@ fun CameraScreen(
             onClick = onOpenSettings,
             modifier = Modifier
                 .align(Alignment.TopEnd)
+                // statusBarsPadding() keeps this clear of the status bar/notch on any device -
+                // without it, Android 15+ (API 35+) enforces edge-to-edge by default for this
+                // app's targetSdk (37) regardless of anything in MainActivity, so content draws
+                // behind system bars unless it insets itself; the regular 8.dp is just the usual
+                // breathing room from that inset.
+                .statusBarsPadding()
                 .padding(8.dp)
                 .semantics { contentDescription = settingsDescription },
         ) {
@@ -131,6 +138,7 @@ fun CameraScreen(
                 onClick = onDiagnosticsOverlayToggled,
                 modifier = Modifier
                     .align(Alignment.TopStart)
+                    .statusBarsPadding()
                     .padding(8.dp)
                     .semantics { contentDescription = diagnosticsToggleDescription },
             ) {
@@ -205,7 +213,7 @@ private fun GrantedCameraContent(
                             onOverlayVisibilityChanged(shouldShow)
                         },
                         overlayVisible = uiState.overlayVisible,
-                        cameraAcceptingCaptureRequests = uiState.captureStatus != CaptureStatusUi.Capturing,
+                        cameraAcceptingCaptureRequests = uiState.captureProgress == CaptureProgressUi.Hidden,
                         onGestureEvent = onGestureDiagnosticEvent,
                     )
                 },
@@ -233,15 +241,13 @@ private fun GrantedCameraContent(
             )
         }
 
-        // Hidden (not just covered) while the overlay is shown: both sit conceptually underneath
-        // it, so the image fully hides them rather than the controls poking out from behind it.
-        // Capture still works by tapping the overlay itself either way.
-        if (!uiState.overlayVisible) {
-            CaptureStatusIndicator(
-                status = uiState.captureStatus,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 24.dp),
+        // Composed after (so drawn on top of) the overlay image above - see "Capture Progress
+        // Indicator" in app-spec.md: this must stay visible even while the privacy overlay is
+        // covering the preview, not hide along with it.
+        if (uiState.captureProgress != CaptureProgressUi.Hidden) {
+            CaptureProgressIndicator(
+                progress = uiState.captureProgress,
+                modifier = Modifier.align(Alignment.Center),
             )
         }
 
@@ -252,7 +258,10 @@ private fun GrantedCameraContent(
             onToggle = onVoiceTriggerToggle,
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                // Clears the gear icon rendered above this content in the outer CameraScreen Box.
+                // statusBarsPadding() first, matching the gear icon's own inset, so the fixed
+                // 72.dp below reliably clears it regardless of the device's actual status bar/
+                // notch height - see the gear IconButton's modifier for why that inset is there.
+                .statusBarsPadding()
                 .padding(top = 72.dp, end = 16.dp),
         )
 
@@ -411,29 +420,32 @@ private fun DiagnosticsOverlay(info: DiagnosticsOverlayInfo, aspectRatio: Captur
 
 private const val ATTEMPT_ID_DISPLAY_LENGTH = 8
 
+/**
+ * Standalone progress control shown above the privacy overlay (see "Capture Progress Indicator" in
+ * app-spec.md) - an indeterminate spinner for the whole of Single-Shot Mode's capture, or a
+ * determinate one that fills in [CaptureProgressUi.Determinate.totalSteps] discrete steps as each
+ * Burst Mode image finishes. Unlike the small textual status indicator this replaced, it
+ * deliberately stays visible while the privacy overlay is shown (see its call site in
+ * [GrantedCameraContent]) rather than hiding along with it.
+ */
 @Composable
-private fun CaptureStatusIndicator(status: CaptureStatusUi, modifier: Modifier = Modifier) {
-    // No error branch here: capture and file-saving errors are logged, not shown on screen - see
-    // "Error Handling" in app-spec.md and CaptureStatusUi's kdoc. A failure simply falls back to
-    // the idle text below.
-    val text = when (status) {
-        CaptureStatusUi.Idle -> stringResource(R.string.capture_status_idle)
-        CaptureStatusUi.Capturing -> stringResource(R.string.capture_status_capturing)
-        CaptureStatusUi.Saved -> stringResource(R.string.capture_status_saved)
-    }
+private fun CaptureProgressIndicator(progress: CaptureProgressUi, modifier: Modifier = Modifier) {
+    val description = stringResource(R.string.capture_progress_indicator_content_description)
     Card(
-        modifier = modifier.semantics { liveRegion = LiveRegionMode.Polite },
+        modifier = modifier.semantics {
+            contentDescription = description
+            liveRegion = LiveRegionMode.Polite
+        },
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-        ) {
-            if (status == CaptureStatusUi.Capturing) {
-                CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                Box(modifier = Modifier.size(8.dp))
+        Box(modifier = Modifier.padding(24.dp), contentAlignment = Alignment.Center) {
+            when (progress) {
+                CaptureProgressUi.Indeterminate -> CircularProgressIndicator()
+                is CaptureProgressUi.Determinate -> CircularProgressIndicator(
+                    progress = { progress.completedSteps.toFloat() / progress.totalSteps },
+                )
+                CaptureProgressUi.Hidden -> Unit
             }
-            Text(text = text)
         }
     }
 }

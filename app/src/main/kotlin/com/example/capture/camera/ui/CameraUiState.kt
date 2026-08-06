@@ -11,7 +11,6 @@ import com.example.capture.permissions.PermissionStatus
 data class CameraUiState(
     val cameraPermission: PermissionStatus = PermissionStatus.NOT_DETERMINED,
     val microphonePermission: PermissionStatus = PermissionStatus.NOT_DETERMINED,
-    val captureStatus: CaptureStatusUi = CaptureStatusUi.Idle,
     val voiceTriggerEnabled: Boolean = false,
     val voiceListening: Boolean = false,
     val voiceError: String? = null,
@@ -31,16 +30,24 @@ data class CameraUiState(
      * alter the active burst").
      */
     val captureAspectRatio: CaptureAspectRatio = CaptureAspectRatio.RATIO_4_3,
+    /** Drives [CaptureProgressIndicator] - see its kdoc and "Capture Progress Indicator" in app-spec.md. */
+    val captureProgress: CaptureProgressUi = CaptureProgressUi.Hidden,
 )
 
 /**
- * UI-facing projection of [com.example.capture.camera.domain.CaptureState]. Deliberately carries
- * no error detail: capture and file-saving errors are logged (see
- * [com.example.capture.camera.domain.CaptureErrorLogger]), not shown on the main camera screen -
- * see "Error Handling" in app-spec.md.
+ * Drives the standalone progress control shown above the privacy overlay (see "Capture Progress
+ * Indicator" in app-spec.md) - the only on-screen indication that a capture is in progress; no
+ * textual status ("Capturing…"/"Photo saved") is shown, and capture/file-saving errors are logged
+ * (see [com.example.capture.camera.domain.CaptureErrorLogger]), not displayed, per "Error Handling"
+ * in app-spec.md.
  */
-sealed interface CaptureStatusUi {
-    data object Idle : CaptureStatusUi
-    data object Capturing : CaptureStatusUi
-    data object Saved : CaptureStatusUi
+sealed interface CaptureProgressUi {
+    /** No capture in flight - the indicator is not shown at all. */
+    data object Hidden : CaptureProgressUi
+
+    /** Single-Shot Mode: a spinner with no specific completion fraction. */
+    data object Indeterminate : CaptureProgressUi
+
+    /** Burst Mode: advances in [com.example.capture.camera.domain.BURST_IMAGE_COUNT] discrete steps as each image finishes. */
+    data class Determinate(val completedSteps: Int, val totalSteps: Int) : CaptureProgressUi
 }
