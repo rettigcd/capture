@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
+import com.example.capture.camera.domain.CaptureTriggerKind
 import com.example.capture.common.ApplicationScope
 import com.example.capture.settings.domain.AppSettings
 import com.example.capture.settings.domain.OverlayImageStore
@@ -60,8 +61,8 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun onCaptureModeChanged(mode: CaptureMode) {
-        applicationScope.launch { settingsRepository.setCaptureMode(mode) }
+    fun onCaptureModeChanged(trigger: CaptureTriggerKind, mode: CaptureMode) {
+        applicationScope.launch { settingsRepository.setCaptureMode(trigger, mode) }
     }
 
     fun onBurstIntervalChanged(intervalMillis: Long) {
@@ -86,7 +87,7 @@ class SettingsViewModel @Inject constructor(
 private fun AppSettings.toUiState() = SettingsUiState(
     vibrationDurationMillis = vibrationDurationMillis,
     overlayImageUriString = overlayImageUriString,
-    captureMode = captureMode,
+    captureModeByTrigger = captureModeByTrigger,
     burstIntervalMillis = burstIntervalMillis,
     captureAspectRatio = captureAspectRatio,
     diagnosticsFileLoggingEnabled = diagnosticsFileLoggingEnabled,

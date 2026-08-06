@@ -2,6 +2,7 @@ package com.example.capture.camera.ui
 
 import android.app.Application
 import android.content.Context
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -41,7 +42,7 @@ class CameraScreenTest {
 
     private fun setScreen(
         uiState: CameraUiState,
-        onScreenTouch: () -> Unit = {},
+        onScreenTouch: (isTopHalf: Boolean) -> Unit = {},
         onShutterButtonClick: () -> Unit = {},
         onVoiceTriggerToggle: (Boolean) -> Unit = {},
         onOverlayVisibilityChanged: (Boolean) -> Unit = {},
@@ -109,6 +110,39 @@ class CameraScreenTest {
         ).performTouchInput { click() }
 
         assertThat(touchCount).isEqualTo(1)
+    }
+
+    @Test
+    fun tappingTheTopHalfOfThePreview_reportsATopHalfTouch() {
+        var isTopHalf: Boolean? = null
+        setScreen(
+            CameraUiState(cameraPermission = PermissionStatus.GRANTED),
+            onScreenTouch = { isTopHalf = it },
+        )
+
+        composeTestRule.onNodeWithContentDescription(
+            context.getString(R.string.camera_preview_content_description),
+        ).performTouchInput { click(position = Offset(width / 2f, height * 0.1f)) }
+
+        assertThat(isTopHalf).isTrue()
+    }
+
+    @Test
+    fun tappingTheBottomHalfOfThePreview_reportsABottomHalfTouch() {
+        var isTopHalf: Boolean? = null
+        setScreen(
+            CameraUiState(cameraPermission = PermissionStatus.GRANTED),
+            onScreenTouch = { isTopHalf = it },
+        )
+
+        // Off-center on X: the shutter button sits bottom-center and, unlike the gesture surface
+        // underneath it, actively consumes its own clicks - a centered X here would land on it
+        // instead of reaching this test's gesture surface at all.
+        composeTestRule.onNodeWithContentDescription(
+            context.getString(R.string.camera_preview_content_description),
+        ).performTouchInput { click(position = Offset(width * 0.1f, height * 0.6f)) }
+
+        assertThat(isTopHalf).isFalse()
     }
 
     @Test

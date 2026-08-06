@@ -27,6 +27,12 @@
     <string name="settings_capture_mode_label">Capture mode</string>
     <string name="settings_capture_mode_single_shot">Single</string>
     <string name="settings_capture_mode_burst">Burst</string>
+    <string name="settings_capture_mode_trigger_screen_top">Screen - top half</string>
+    <string name="settings_capture_mode_trigger_screen_bottom">Screen - bottom half</string>
+    <string name="settings_capture_mode_trigger_shutter_button">Shutter button</string>
+    <string name="settings_capture_mode_trigger_volume_up">Volume up</string>
+    <string name="settings_capture_mode_trigger_volume_down">Volume down</string>
+    <string name="settings_capture_mode_trigger_voice_command">Voice command</string>
     <string name="settings_burst_interval_label">Burst interval: %1$d ms</string>
     <string name="settings_aspect_ratio_label">Capture aspect ratio</string>
     <string name="settings_aspect_ratio_4_3">4:3</string>

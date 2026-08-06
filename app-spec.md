@@ -12,7 +12,7 @@ The app displays a full-screen live camera preview and takes a photograph when t
 
 All three inputs must invoke the same central capture operation. Do not implement three separate camera-capture paths.
 
-Each of these actions requests either a single photograph or a burst of four, depending on the currently active capture mode (see "Capture Mode").
+Each of these actions requests either a single photograph or a burst of four, depending on that specific action's own independently-configured capture mode (a screen touch is itself split into a top-half and a bottom-half trigger for this purpose - see "Capture Mode").
 
 Use a temporary application name such as `Capture` and package name `com.example.capture`. Keep names easy to change later.
 
@@ -150,7 +150,9 @@ Create one capture coordinator or use case that receives commands similar to:
 
 ```kotlin
 sealed interface CaptureTrigger {
-    data object ScreenTouch : CaptureTrigger
+    data object ScreenTouchTop : CaptureTrigger
+    data object ScreenTouchBottom : CaptureTrigger
+    data object ShutterButton : CaptureTrigger
     data object VolumeUp : CaptureTrigger
     data object VolumeDown : CaptureTrigger
     data class VoiceCommand(val phrase: String) : CaptureTrigger
@@ -538,25 +540,48 @@ This part of the application is complete when all of the following are true:
 
 ## Capture Mode
 
-The application supports two capture modes:
+Each of the six ways a capture can be triggered has its own independently-configured capture mode,
+selected from the Settings page (see "Settings") rather than the camera screen itself:
 
-* **Single-Shot Mode** - each capture command (touch, volume button, or voice command) requests
-  one image, matching the behavior described in "Application purpose" and "Initial application
-  behavior" above.
-* **Burst Mode** - each capture command requests four images in quick succession (see "Burst Mode"
-  below).
+* Screen tap - top half
+* Screen tap - bottom half
+* Shutter button
+* Volume up
+* Volume down
+* Voice command
 
-The active capture mode is selected from the Settings page (see "Settings") rather than the camera
-screen itself. The selected mode is persisted and restored automatically when the application
-restarts, the same way the other settings are.
+The screen-tap trigger described elsewhere in this document (see "Application purpose" and
+"Initial application behavior") is split into these two independent triggers by vertical screen
+position: a tap landing in the top half of the full screen (not just the aspect-ratio-constrained
+preview area) is the "top half" trigger, and a tap landing in the bottom half is the "bottom half"
+trigger - the same split applies regardless of whether the live preview or the privacy overlay
+image is currently shown (see "Overlay image visibility").
+
+Each of the six triggers is independently set to one of two capture modes:
+
+* **Single-Shot Mode** - that trigger requests one image, matching the behavior described in
+  "Application purpose" and "Initial application behavior" above.
+* **Burst Mode** - that trigger requests four images in quick succession (see "Burst Mode" below).
+
+A trigger's configured mode is entirely independent of every other trigger's - for example, Volume
+Up can be set to Burst Mode while the screen's top half stays set to Single-Shot Mode, and each
+behaves only according to its own setting. All six settings are persisted and restored
+automatically when the application restarts, the same way the other settings are.
+
+The underlying camera hardware pipeline's latency/resolution behavior (see "Capture Performance")
+is a shared, one-at-a-time configuration rather than something chosen per capture, so using a
+trigger whose configured mode differs from whichever mode the pipeline is currently configured for
+incurs a one-time delay while the pipeline reconfigures itself for the new mode before that capture
+proceeds. Repeated use of the same trigger, or of triggers sharing the same configured mode, does
+not incur this delay.
 
 ## Burst Mode
 
-When Burst Mode is active, a single capture command - the same touch, volume-button press, or
-voice command that would take one photo in Single-Shot Mode - initiates a sequence of four
-image-capture requests spaced by a configurable target interval, rather than a separate capture
-path. All four requests still flow through the one central capture operation described in "Capture
-coordination"; Burst Mode issues that same operation four times in sequence instead of once.
+When a trigger configured for Burst Mode (see "Capture Mode") fires, it initiates a sequence of
+four image-capture requests spaced by a configurable target interval, rather than a separate
+capture path. All four requests still flow through the one central capture operation described in
+"Capture coordination"; Burst Mode issues that same operation four times in sequence instead of
+once.
 
 The target interval between capture requests is configured on the Settings page using a slider
 with discrete snap points every 250 ms. The permitted range is 250 ms (minimum) to 2 seconds
@@ -680,8 +705,10 @@ The settings screen lets the user configure:
    app-private storage at selection time (while the picker's grant is still valid) and persist a
    reference to that private copy instead, so the durability of the setting does not depend on the
    picker's grant lifetime at all.
-3. **Capture mode** - a control (for example, a two-option segmented button) for choosing between
-   Single-Shot Mode and Burst Mode (see "Capture Mode").
+3. **Capture mode, per trigger** - six independent controls (for example, six two-option segmented
+   buttons, one per trigger), each choosing between Single-Shot Mode and Burst Mode for one of the
+   six capture triggers: screen tap top half, screen tap bottom half, shutter button, volume up,
+   volume down, and voice command (see "Capture Mode").
 4. **Burst interval** - a slider with discrete snap points every 250 ms from 250 ms to 2 seconds,
    defaulting to 500 ms (see "Burst Mode").
 5. **Capture aspect ratio** - a control choosing between 4:3 (default) and 16:9 (see "Capture
@@ -691,7 +718,9 @@ The settings screen lets the user configure:
    the new ratio takes effect only once that burst finishes. Applying a new ratio may briefly stop
    and rebind the affected camera use cases; no image may be captured during that rebind.
 
-Persist all five settings, and the overlay-visibility state described above, across app restarts
+Persist all of these settings (ten distinct persisted values in total, once the six per-trigger
+capture modes are counted individually), and the overlay-visibility state described above, across
+app restarts
 (e.g. with Jetpack DataStore). Keep the settings screen testable the same way as the camera screen:
 stateless composables driven by state and callbacks, with the actual persistence mechanism behind
 an interface.

@@ -20,6 +20,7 @@ import com.example.capture.camera.domain.GestureDiagnosticEvent
 import com.example.capture.camera.domain.GestureDiagnosticsLogger
 import com.example.capture.camera.domain.HapticFeedback
 import com.example.capture.camera.domain.OverlayVisibilityRepository
+import com.example.capture.camera.domain.kind
 import com.example.capture.camera.domain.toDiagnosticSource
 import com.example.capture.common.ApplicationScope
 import com.example.capture.permissions.CapturePermissions
@@ -41,6 +42,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 
 /**
@@ -88,6 +90,16 @@ class CameraViewModel @Inject constructor(
     // so the live camera use cases are never rebuilt/rebound mid-burst.
     private val effectiveCaptureAspectRatio = MutableStateFlow(CaptureAspectRatio.RATIO_4_3)
 
+    /**
+     * The `ImageCapture` use case's capture-mode/resolution optimization (see CameraPreview.kt) is
+     * a bind-time decision shared by every trigger, but each [com.example.capture.camera.domain.CaptureTriggerKind]
+     * now has its own independent Single-Shot/Burst setting (see "Capture Mode" in app-spec.md) -
+     * so this tracks which mode the pipeline is *currently* bound for, updated by
+     * [ensureCaptureModeBound] right before a capture whose trigger needs a different mode, rather
+     * than mirroring a single global setting the way it used to.
+     */
+    private val _boundCaptureMode = MutableStateFlow(CaptureMode.SINGLE_SHOT)
+
     @Volatile
     private var burstInProgress = false
 
@@ -106,7 +118,8 @@ class CameraViewModel @Inject constructor(
         settingsRepository.settings,
         overlayVisibilityRepository.overlayVisible,
         effectiveCaptureAspectRatio,
-    ) { state, settings, overlayVisible, captureAspectRatio ->
+        _boundCaptureMode,
+    ) { state, settings, overlayVisible, captureAspectRatio, boundCaptureMode ->
         CameraUiState(
             cameraPermission = state.cameraPermission,
             microphonePermission = state.microphonePermission,
@@ -118,7 +131,7 @@ class CameraViewModel @Inject constructor(
             // has been picked yet, fall back to the live preview.
             overlayVisible = overlayVisible && settings.overlayImageUriString != null,
             overlayImageUriString = settings.overlayImageUriString,
-            captureMode = settings.captureMode,
+            captureMode = boundCaptureMode,
             captureAspectRatio = captureAspectRatio,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), CameraUiState())
@@ -155,10 +168,14 @@ class CameraViewModel @Inject constructor(
         // image is visible (see "Flash and Torch Restrictions" in app-spec.md). There is
         // currently no user-facing control that turns either on, but this actively forces them
         // off - rather than merely relying on nothing else enabling them - every time either
-        // condition becomes true.
+        // condition becomes true. Keyed off the raw CaptureState (is a burst actually running
+        // right now), not a settings value - with per-trigger capture modes there's no longer a
+        // single global "is Burst Mode selected" the way CameraUiState.captureMode used to mean.
         viewModelScope.launch {
-            uiState
-                .map { it.captureMode == CaptureMode.BURST || it.overlayVisible }
+            combine(
+                captureCoordinator.state.map { it is CaptureState.BurstStarted || it is CaptureState.BurstProgress },
+                overlayVisibilityRepository.overlayVisible,
+            ) { burstActive, overlayVisible -> burstActive || overlayVisible }
                 .distinctUntilChanged()
                 .collect { mustDisableFlashAndTorch -> if (mustDisableFlashAndTorch) flashTorchController.disableFlashAndTorch() }
         }
@@ -217,7 +234,9 @@ class CameraViewModel @Inject constructor(
         }
     }
 
-    fun onScreenTouch() = requestCapture(CaptureTrigger.ScreenTouch)
+    /** [isTopHalf] selects which of the two independently-configurable screen-tap zones fired (see "Capture Mode" in app-spec.md). */
+    fun onScreenTouch(isTopHalf: Boolean) =
+        requestCapture(if (isTopHalf) CaptureTrigger.ScreenTouchTop else CaptureTrigger.ScreenTouchBottom)
 
     fun onShutterButtonClick() = requestCapture(CaptureTrigger.ShutterButton)
 
@@ -263,12 +282,44 @@ class CameraViewModel @Inject constructor(
     private fun requestCapture(trigger: CaptureTrigger) {
         viewModelScope.launch {
             val settings = settingsRepository.settings.first()
+            val requiredMode = settings.captureModeByTrigger[trigger.kind()] ?: CaptureMode.SINGLE_SHOT
+            ensureCaptureModeBound(requiredMode)
             captureCoordinator.requestCapture(
                 trigger,
-                settings.captureMode,
+                requiredMode,
                 settings.burstIntervalMillis,
                 settings.captureAspectRatio,
             )
+        }
+    }
+
+    /**
+     * Rebinds the camera pipeline to [requiredMode] first if it isn't already, so a trigger
+     * configured for a different mode than whatever last fired still gets that mode's own
+     * latency/resolution behavior (see "Capture Mode" in app-spec.md) rather than inheriting
+     * whatever the pipeline happened to be bound as. Updating [_boundCaptureMode] causes
+     * `CameraPreview` to rebuild and rebind its `ImageCapture` use case (the same mechanism that
+     * already reacts to a capture-aspect-ratio change); this suspends until that completes -
+     * bounded by [CAPTURE_MODE_REBIND_TIMEOUT_MILLIS] so a camera that's bound once but gets stuck
+     * mid-rebind still falls through to `CameraXCaptureController`'s existing "not ready" failure
+     * path instead of hanging this call forever. Switching between differently-configured triggers
+     * therefore costs a one-time rebind delay; repeated use of the same trigger, or of triggers
+     * sharing a mode, never rebinds.
+     *
+     * Only waits at all if the pipeline was *already* bound to something ([previousUseCase] is
+     * non-null): if it was never bound in the first place (camera permission not yet granted, or
+     * `CameraPreview` simply hasn't composed yet), there is no rebind to wait for - the normal
+     * "camera not ready" handling in [captureCoordinator]/`CameraXCaptureController` already covers
+     * that case without this method adding an unconditional multi-second wait to the very first
+     * capture request the app ever makes.
+     */
+    private suspend fun ensureCaptureModeBound(requiredMode: CaptureMode) {
+        if (_boundCaptureMode.value == requiredMode) return
+        val previousUseCase = imageCaptureUseCaseHolder.imageCapture.value
+        _boundCaptureMode.value = requiredMode
+        if (previousUseCase == null) return
+        withTimeoutOrNull(CAPTURE_MODE_REBIND_TIMEOUT_MILLIS) {
+            imageCaptureUseCaseHolder.imageCapture.first { it != null && it !== previousUseCase }
         }
     }
 
@@ -315,6 +366,13 @@ class CameraViewModel @Inject constructor(
 
     private companion object {
         const val STOP_TIMEOUT_MILLIS = 5_000L
+
+        /**
+         * Generous upper bound for a camera-pipeline rebind (see [ensureCaptureModeBound]) - long
+         * enough to cover a real rebind on slow hardware, short enough that a camera that's never
+         * going to bind (e.g. permission denied) doesn't leave a capture request hanging for long.
+         */
+        const val CAPTURE_MODE_REBIND_TIMEOUT_MILLIS = 3_000L
     }
 }
 

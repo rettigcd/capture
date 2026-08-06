@@ -14,6 +14,7 @@ import com.example.capture.camera.domain.CaptureErrorLogger
 import com.example.capture.camera.domain.CaptureMetadataLogEntry
 import com.example.capture.camera.domain.CaptureMetadataLogger
 import com.example.capture.camera.domain.CaptureMode
+import com.example.capture.camera.domain.CaptureTriggerKind
 import com.example.capture.camera.domain.FlashTorchController
 import com.example.capture.camera.domain.GestureDiagnosticEvent
 import com.example.capture.camera.domain.GestureDiagnosticsLogger
@@ -162,8 +163,10 @@ class FakeSettingsRepository(initial: AppSettings = AppSettings()) : SettingsRep
         _settings.value = _settings.value.copy(overlayImageUriString = uriString)
     }
 
-    override suspend fun setCaptureMode(mode: CaptureMode) {
-        _settings.value = _settings.value.copy(captureMode = mode)
+    override suspend fun setCaptureMode(trigger: CaptureTriggerKind, mode: CaptureMode) {
+        _settings.value = _settings.value.copy(
+            captureModeByTrigger = _settings.value.captureModeByTrigger + (trigger to mode),
+        )
     }
 
     override suspend fun setBurstIntervalMillis(intervalMillis: Long) {

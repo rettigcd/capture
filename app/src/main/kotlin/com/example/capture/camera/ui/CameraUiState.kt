@@ -21,6 +21,13 @@ data class CameraUiState(
      */
     val overlayVisible: Boolean = false,
     val overlayImageUriString: String? = null,
+    /**
+     * The mode the camera pipeline is *currently bound for* - not a single global setting (each
+     * trigger now has its own Single-Shot/Burst choice, see "Capture Mode" in app-spec.md), but
+     * whichever mode [com.example.capture.camera.ui.CameraViewModel] last rebound the pipeline to
+     * for the most recently requested capture. `CameraPreview` reads this to configure
+     * `ImageCapture`'s latency/resolution behavior.
+     */
     val captureMode: CaptureMode = CaptureMode.SINGLE_SHOT,
     /**
      * The aspect ratio currently in effect for both the preview layout and the CameraX use

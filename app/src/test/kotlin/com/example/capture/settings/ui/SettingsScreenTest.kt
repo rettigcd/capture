@@ -3,9 +3,12 @@ package com.example.capture.settings.ui
 import android.app.Application
 import android.content.Context
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -13,6 +16,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.capture.R
 import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
+import com.example.capture.camera.domain.CaptureTriggerKind
 import com.google.common.truth.Truth.assertThat
 import org.junit.Rule
 import org.junit.Test
@@ -34,7 +38,7 @@ class SettingsScreenTest {
         uiState: SettingsUiState,
         onVibrationDurationChanged: (Long) -> Unit = {},
         onPickImageClick: () -> Unit = {},
-        onCaptureModeChanged: (CaptureMode) -> Unit = {},
+        onCaptureModeChanged: (CaptureTriggerKind, CaptureMode) -> Unit = { _, _ -> },
         onBurstIntervalChanged: (Long) -> Unit = {},
         onCaptureAspectRatioChanged: (CaptureAspectRatio) -> Unit = {},
         onDiagnosticsFileLoggingChanged: (Boolean) -> Unit = {},
@@ -108,22 +112,40 @@ class SettingsScreenTest {
     }
 
     @Test
-    fun captureModeSegmentedButton_reflectsTheCurrentSelection() {
-        setScreen(SettingsUiState(captureMode = CaptureMode.BURST))
+    fun allSixCaptureModeTriggers_areShown() {
+        setScreen(SettingsUiState())
 
-        composeTestRule.onNodeWithText(context.getString(R.string.settings_capture_mode_burst)).assertIsDisplayed()
+        for (trigger in CaptureTriggerKind.entries) {
+            composeTestRule.onNodeWithTag("capture_mode_${trigger.name.lowercase()}_single_shot")
+                .performScrollTo()
+                .assertIsDisplayed()
+        }
     }
 
     @Test
-    fun selectingBurst_invokesCaptureModeChangedCallback() {
-        var selectedMode: CaptureMode? = null
-        setScreen(SettingsUiState(captureMode = CaptureMode.SINGLE_SHOT), onCaptureModeChanged = { selectedMode = it })
+    fun captureModeSegmentedButtons_reflectEachTriggersOwnSelection_independently() {
+        setScreen(
+            SettingsUiState(
+                captureModeByTrigger = CaptureTriggerKind.entries.associateWith { CaptureMode.SINGLE_SHOT } +
+                    (CaptureTriggerKind.VOLUME_UP to CaptureMode.BURST),
+            ),
+        )
 
-        composeTestRule.onNodeWithText(context.getString(R.string.settings_capture_mode_burst))
-            .performScrollTo()
-            .performClick()
+        composeTestRule.onNodeWithTag("capture_mode_volume_up_burst").performScrollTo().assertIsSelected()
+        composeTestRule.onNodeWithTag("capture_mode_volume_up_single_shot").assertIsNotSelected()
+        // A trigger left at the default stays Single-Shot, unaffected by Volume Up's setting.
+        composeTestRule.onNodeWithTag("capture_mode_volume_down_single_shot").performScrollTo().assertIsSelected()
+        composeTestRule.onNodeWithTag("capture_mode_volume_down_burst").assertIsNotSelected()
+    }
 
-        assertThat(selectedMode).isEqualTo(CaptureMode.BURST)
+    @Test
+    fun selectingBurstForOneTrigger_invokesCallbackWithOnlyThatTrigger() {
+        var changed: Pair<CaptureTriggerKind, CaptureMode>? = null
+        setScreen(SettingsUiState(), onCaptureModeChanged = { trigger, mode -> changed = trigger to mode })
+
+        composeTestRule.onNodeWithTag("capture_mode_volume_up_burst").performScrollTo().performClick()
+
+        assertThat(changed).isEqualTo(CaptureTriggerKind.VOLUME_UP to CaptureMode.BURST)
     }
 
     @Test

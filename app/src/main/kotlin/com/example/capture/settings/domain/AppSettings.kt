@@ -2,12 +2,21 @@ package com.example.capture.settings.domain
 
 import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
+import com.example.capture.camera.domain.CaptureTriggerKind
 
 /** Immutable snapshot of every user-configurable setting, persisted across app restarts. */
 data class AppSettings(
     val vibrationDurationMillis: Long = DEFAULT_VIBRATION_DURATION_MILLIS,
     val overlayImageUriString: String? = null,
-    val captureMode: CaptureMode = CaptureMode.SINGLE_SHOT,
+    /**
+     * Each of the six trigger kinds (see "Capture Mode" in app-spec.md) has its own independent
+     * Single-Shot/Burst choice - defaults to [CaptureMode.SINGLE_SHOT] for every kind, matching
+     * this type's own default and the app's pre-per-trigger behavior. Always has exactly one entry
+     * per [CaptureTriggerKind] value - [SettingsRepository.setCaptureMode] only ever overwrites an
+     * existing entry, never adds/removes keys.
+     */
+    val captureModeByTrigger: Map<CaptureTriggerKind, CaptureMode> =
+        CaptureTriggerKind.entries.associateWith { CaptureMode.SINGLE_SHOT },
     val burstIntervalMillis: Long = DEFAULT_BURST_INTERVAL_MILLIS,
     val captureAspectRatio: CaptureAspectRatio = CaptureAspectRatio.RATIO_4_3,
     /**

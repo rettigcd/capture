@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
+import com.example.capture.camera.domain.CaptureTriggerKind
 import com.example.capture.settings.domain.AppSettings
 import com.example.capture.settings.domain.SettingsRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -27,10 +28,14 @@ class DataStoreSettingsRepository @Inject constructor(
     private object Keys {
         val VIBRATION_DURATION_MILLIS = longPreferencesKey("vibration_duration_millis")
         val OVERLAY_IMAGE_URI = stringPreferencesKey("overlay_image_uri")
-        val CAPTURE_MODE = stringPreferencesKey("capture_mode")
         val BURST_INTERVAL_MILLIS = longPreferencesKey("burst_interval_millis")
         val CAPTURE_ASPECT_RATIO = stringPreferencesKey("capture_aspect_ratio")
         val DIAGNOSTICS_FILE_LOGGING_ENABLED = booleanPreferencesKey("diagnostics_file_logging_enabled")
+
+        // One key per CaptureTriggerKind (see "Capture Mode" in app-spec.md) rather than the single
+        // "capture_mode" key this replaced - that old key is simply orphaned/never read again, not
+        // migrated, matching this app's usual approach to settings changes.
+        fun captureMode(trigger: CaptureTriggerKind) = stringPreferencesKey("capture_mode_${trigger.name.lowercase()}")
     }
 
     override val settings: Flow<AppSettings> = context.settingsDataStore.data.map { preferences ->
@@ -38,7 +43,9 @@ class DataStoreSettingsRepository @Inject constructor(
             vibrationDurationMillis = preferences[Keys.VIBRATION_DURATION_MILLIS]
                 ?: AppSettings.DEFAULT_VIBRATION_DURATION_MILLIS,
             overlayImageUriString = preferences[Keys.OVERLAY_IMAGE_URI],
-            captureMode = preferences[Keys.CAPTURE_MODE]?.toCaptureModeOrDefault() ?: CaptureMode.SINGLE_SHOT,
+            captureModeByTrigger = CaptureTriggerKind.entries.associateWith { trigger ->
+                preferences[Keys.captureMode(trigger)]?.toCaptureModeOrDefault() ?: CaptureMode.SINGLE_SHOT
+            },
             burstIntervalMillis = preferences[Keys.BURST_INTERVAL_MILLIS]
                 ?: AppSettings.DEFAULT_BURST_INTERVAL_MILLIS,
             captureAspectRatio = preferences[Keys.CAPTURE_ASPECT_RATIO]?.toCaptureAspectRatioOrDefault()
@@ -61,8 +68,8 @@ class DataStoreSettingsRepository @Inject constructor(
         }
     }
 
-    override suspend fun setCaptureMode(mode: CaptureMode) {
-        context.settingsDataStore.edit { it[Keys.CAPTURE_MODE] = mode.name }
+    override suspend fun setCaptureMode(trigger: CaptureTriggerKind, mode: CaptureMode) {
+        context.settingsDataStore.edit { it[Keys.captureMode(trigger)] = mode.name }
     }
 
     override suspend fun setBurstIntervalMillis(intervalMillis: Long) {

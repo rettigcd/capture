@@ -2,6 +2,7 @@ package com.example.capture.settings.ui
 
 import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
+import com.example.capture.camera.domain.CaptureTriggerKind
 import com.example.capture.settings.domain.AppSettings
 import com.example.capture.testing.FakeOverlayImageStore
 import com.example.capture.testing.FakeSettingsRepository
@@ -145,16 +146,20 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun `changing the capture mode updates state and is persisted`() = runTest {
+    fun `changing one trigger's capture mode updates state and is persisted, independent of the others`() = runTest {
         val repository = FakeSettingsRepository()
         val vm = buildViewModel(repository)
         val collectJob = launch { vm.uiState.collect {} }
 
-        vm.onCaptureModeChanged(CaptureMode.BURST)
+        vm.onCaptureModeChanged(CaptureTriggerKind.VOLUME_UP, CaptureMode.BURST)
         advanceUntilIdle()
 
-        assertThat(vm.uiState.value.captureMode).isEqualTo(CaptureMode.BURST)
-        assertThat(repository.settings.value.captureMode).isEqualTo(CaptureMode.BURST)
+        assertThat(vm.uiState.value.captureModeByTrigger[CaptureTriggerKind.VOLUME_UP]).isEqualTo(CaptureMode.BURST)
+        assertThat(repository.settings.value.captureModeByTrigger[CaptureTriggerKind.VOLUME_UP]).isEqualTo(CaptureMode.BURST)
+        // Every other trigger is untouched.
+        for (trigger in CaptureTriggerKind.entries - CaptureTriggerKind.VOLUME_UP) {
+            assertThat(vm.uiState.value.captureModeByTrigger[trigger]).isEqualTo(CaptureMode.SINGLE_SHOT)
+        }
 
         collectJob.cancel()
     }

@@ -28,12 +28,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.example.capture.R
 import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
+import com.example.capture.camera.domain.CaptureTriggerKind
 import com.example.capture.settings.domain.AppSettings
 import kotlin.math.roundToLong
 
@@ -48,7 +50,7 @@ fun SettingsScreen(
     uiState: SettingsUiState,
     onVibrationDurationChanged: (Long) -> Unit,
     onPickImageClick: () -> Unit,
-    onCaptureModeChanged: (CaptureMode) -> Unit,
+    onCaptureModeChanged: (CaptureTriggerKind, CaptureMode) -> Unit,
     onBurstIntervalChanged: (Long) -> Unit,
     onCaptureAspectRatioChanged: (CaptureAspectRatio) -> Unit,
     onDiagnosticsFileLoggingChanged: (Boolean) -> Unit,
@@ -89,8 +91,8 @@ fun SettingsScreen(
                 onPickImageClick = onPickImageClick,
             )
             HorizontalDivider()
-            CaptureModeSetting(
-                captureMode = uiState.captureMode,
+            CaptureModeSection(
+                captureModeByTrigger = uiState.captureModeByTrigger,
                 onCaptureModeChanged = onCaptureModeChanged,
             )
             HorizontalDivider()
@@ -152,16 +154,56 @@ private fun OverlayImageSetting(overlayImageUriString: String?, onPickImageClick
     }
 }
 
+/**
+ * Six independent Single-Shot/Burst choices, one per [CaptureTriggerKind] (see "Capture Mode" in
+ * app-spec.md) - each trigger's [CaptureModeRow] is otherwise identical to what used to be the
+ * single, global control here.
+ */
+@Composable
+private fun CaptureModeSection(
+    captureModeByTrigger: Map<CaptureTriggerKind, CaptureMode>,
+    onCaptureModeChanged: (CaptureTriggerKind, CaptureMode) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text(stringResource(R.string.settings_capture_mode_label), style = MaterialTheme.typography.titleMedium)
+        for (trigger in CaptureTriggerKind.entries) {
+            CaptureModeRow(
+                trigger = trigger,
+                captureMode = captureModeByTrigger.getValue(trigger),
+                onCaptureModeChanged = { mode -> onCaptureModeChanged(trigger, mode) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun CaptureTriggerKind.label(): String = stringResource(
+    when (this) {
+        CaptureTriggerKind.SCREEN_TOP -> R.string.settings_capture_mode_trigger_screen_top
+        CaptureTriggerKind.SCREEN_BOTTOM -> R.string.settings_capture_mode_trigger_screen_bottom
+        CaptureTriggerKind.SHUTTER_BUTTON -> R.string.settings_capture_mode_trigger_shutter_button
+        CaptureTriggerKind.VOLUME_UP -> R.string.settings_capture_mode_trigger_volume_up
+        CaptureTriggerKind.VOLUME_DOWN -> R.string.settings_capture_mode_trigger_volume_down
+        CaptureTriggerKind.VOICE_COMMAND -> R.string.settings_capture_mode_trigger_voice_command
+    },
+)
+
+// Distinguishes the six otherwise-identically-labelled Single-Shot/Burst button pairs for tests
+// (see CaptureModeRow's testTag usage below) - not shown to the user.
+private fun CaptureTriggerKind.testTagPrefix(): String = "capture_mode_${name.lowercase()}"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CaptureModeSetting(captureMode: CaptureMode, onCaptureModeChanged: (CaptureMode) -> Unit) {
+private fun CaptureModeRow(trigger: CaptureTriggerKind, captureMode: CaptureMode, onCaptureModeChanged: (CaptureMode) -> Unit) {
+    val testTagPrefix = trigger.testTagPrefix()
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(stringResource(R.string.settings_capture_mode_label))
+        Text(trigger.label())
         SingleChoiceSegmentedButtonRow {
             SegmentedButton(
                 selected = captureMode == CaptureMode.SINGLE_SHOT,
                 onClick = { onCaptureModeChanged(CaptureMode.SINGLE_SHOT) },
                 shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                modifier = Modifier.testTag("${testTagPrefix}_single_shot"),
             ) {
                 Text(stringResource(R.string.settings_capture_mode_single_shot))
             }
@@ -169,6 +211,7 @@ private fun CaptureModeSetting(captureMode: CaptureMode, onCaptureModeChanged: (
                 selected = captureMode == CaptureMode.BURST,
                 onClick = { onCaptureModeChanged(CaptureMode.BURST) },
                 shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                modifier = Modifier.testTag("${testTagPrefix}_burst"),
             ) {
                 Text(stringResource(R.string.settings_capture_mode_burst))
             }

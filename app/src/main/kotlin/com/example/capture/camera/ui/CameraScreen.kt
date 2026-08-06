@@ -77,7 +77,7 @@ import kotlin.math.sqrt
 @Composable
 fun CameraScreen(
     uiState: CameraUiState,
-    onScreenTouch: () -> Unit,
+    onScreenTouch: (isTopHalf: Boolean) -> Unit,
     onShutterButtonClick: () -> Unit,
     onVoiceTriggerToggle: (Boolean) -> Unit,
     onOverlayVisibilityChanged: (Boolean) -> Unit,
@@ -151,7 +151,7 @@ fun CameraScreen(
 @Composable
 private fun GrantedCameraContent(
     uiState: CameraUiState,
-    onScreenTouch: () -> Unit,
+    onScreenTouch: (isTopHalf: Boolean) -> Unit,
     onShutterButtonClick: () -> Unit,
     onVoiceTriggerToggle: (Boolean) -> Unit,
     onOverlayVisibilityChanged: (Boolean) -> Unit,
@@ -308,9 +308,15 @@ private fun GrantedCameraContent(
  * (whichever side of the midpoint it settles on), it is just additionally labelled
  * [GestureClassification.MOVEMENT_BELOW_SWIPE_THRESHOLD] rather than [GestureClassification.SWIPE_LEFT]/
  * [GestureClassification.SWIPE_RIGHT] in the diagnostic log.
+ *
+ * [onTap] receives whether the tap landed in the top or bottom half of this pointer input area's
+ * full height (literal screen halves, independent of the letterboxed/pillarboxed preview area or
+ * which capture aspect ratio is selected, and the same whether the live preview or the privacy
+ * overlay image is currently shown - see "Capture Mode" in app-spec.md), since each half is now an
+ * independently-configurable capture trigger.
  */
 private suspend fun PointerInputScope.detectTapOrHorizontalSwipe(
-    onTap: () -> Unit,
+    onTap: (isTopHalf: Boolean) -> Unit,
     onDrag: (deltaX: Float) -> Unit,
     onDragEnd: () -> Unit,
     overlayVisible: Boolean,
@@ -370,7 +376,7 @@ private suspend fun PointerInputScope.detectTapOrHorizontalSwipe(
                     ),
                 )
                 onGestureEvent(GestureDiagnosticEvent.Accepted(nowMillis, classification))
-                if (isDragging) onDragEnd() else onTap()
+                if (isDragging) onDragEnd() else onTap(down.position.y < size.height / 2f)
                 break
             }
             val delta = change.positionChange()

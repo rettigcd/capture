@@ -9,6 +9,7 @@ import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureCoordinator
 import com.example.capture.camera.domain.CaptureDiagnosticEvent
 import com.example.capture.camera.domain.CaptureMode
+import com.example.capture.camera.domain.CaptureTriggerKind
 import com.example.capture.camera.domain.CaptureTriggerSource
 import com.example.capture.camera.domain.GestureDiagnosticEvent
 import com.example.capture.permissions.PermissionStatus
@@ -59,6 +60,10 @@ class CameraViewModelTest {
     fun tearDown() {
         Dispatchers.resetMain()
     }
+
+    /** All six triggers default to Single-Shot except [trigger], which is set to Burst. */
+    private fun burstFor(trigger: CaptureTriggerKind): Map<CaptureTriggerKind, CaptureMode> =
+        AppSettings().captureModeByTrigger + (trigger to CaptureMode.BURST)
 
     private fun buildViewModel(
         camera: FakeCameraCaptureController = FakeCameraCaptureController(),
@@ -124,7 +129,7 @@ class CameraViewModelTest {
         val vm = buildViewModel(camera = camera, haptics = haptics, scheduler = testScheduler)
         val collectJob = launch { vm.uiState.collect {} }
 
-        vm.onScreenTouch()
+        vm.onScreenTouch(true)
         advanceUntilIdle()
 
         assertThat(camera.captureCount).isEqualTo(1)
@@ -143,7 +148,7 @@ class CameraViewModelTest {
         val vm = buildViewModel(camera = camera, haptics = haptics, settings = settings, scheduler = testScheduler)
         val collectJob = launch { vm.uiState.collect {} }
 
-        vm.onScreenTouch()
+        vm.onScreenTouch(true)
         advanceUntilIdle()
 
         assertThat(haptics.recordedDurationsMillis).containsExactly(240L)
@@ -159,7 +164,7 @@ class CameraViewModelTest {
         val vm = buildViewModel(camera = camera, haptics = haptics, errorLogger = errorLogger, scheduler = testScheduler)
         val collectJob = launch { vm.uiState.collect {} }
 
-        vm.onScreenTouch()
+        vm.onScreenTouch(true)
         advanceUntilIdle()
 
         assertThat(vm.uiState.value.captureProgress).isEqualTo(CaptureProgressUi.Hidden)
@@ -328,15 +333,89 @@ class CameraViewModelTest {
     }
 
     @Test
-    fun `uiState reflects the currently configured capture mode`() = runTest {
-        val settings = FakeSettingsRepository(AppSettings(captureMode = CaptureMode.BURST))
+    fun `uiState captureMode reflects the pipeline's currently bound mode, not a global setting`() = runTest {
+        // captureMode is no longer a direct settings mirror (each trigger has its own setting now)
+        // - it's whichever mode CameraViewModel last bound the pipeline to, which only changes once
+        // a trigger configured for a different mode actually fires (see CameraViewModel's
+        // ensureCaptureModeBound and "Capture Mode" in app-spec.md).
+        val settings = FakeSettingsRepository(AppSettings(captureModeByTrigger = burstFor(CaptureTriggerKind.SCREEN_TOP)))
         val vm = buildViewModel(settings = settings, scheduler = testScheduler)
         val collectJob = launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.captureMode).isEqualTo(CaptureMode.SINGLE_SHOT)
+
+        vm.onScreenTouch(true)
         advanceUntilIdle()
 
         assertThat(vm.uiState.value.captureMode).isEqualTo(CaptureMode.BURST)
 
         collectJob.cancel()
+    }
+
+    @Test
+    fun `a trigger configured for burst produces four images`() = runTest {
+        val camera = FakeCameraCaptureController()
+        val settings = FakeSettingsRepository(
+            AppSettings(captureModeByTrigger = burstFor(CaptureTriggerKind.VOLUME_UP), burstIntervalMillis = 250L),
+        )
+        val vm = buildViewModel(camera = camera, settings = settings, scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+
+        vm.onVolumeUpPressed()
+        advanceUntilIdle()
+
+        assertThat(camera.memoryCaptureCount).isEqualTo(BURST_IMAGE_COUNT)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `a different trigger stays single-shot even while another trigger is configured for burst`() = runTest {
+        val camera = FakeCameraCaptureController()
+        val settings = FakeSettingsRepository(
+            AppSettings(captureModeByTrigger = burstFor(CaptureTriggerKind.VOLUME_UP), burstIntervalMillis = 250L),
+        )
+        val vm = buildViewModel(camera = camera, settings = settings, scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+
+        vm.onVolumeDownPressed()
+        advanceUntilIdle()
+
+        assertThat(camera.captureCount).isEqualTo(1)
+        assertThat(camera.memoryCaptureCount).isEqualTo(0)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `screen top and bottom halves have independent capture modes`() = runTest {
+        val topCamera = FakeCameraCaptureController()
+        val topSettings = FakeSettingsRepository(
+            AppSettings(captureModeByTrigger = burstFor(CaptureTriggerKind.SCREEN_TOP), burstIntervalMillis = 250L),
+        )
+        val topVm = buildViewModel(camera = topCamera, settings = topSettings, scheduler = testScheduler)
+        val topCollectJob = launch { topVm.uiState.collect {} }
+        topVm.onScreenTouch(true)
+        advanceUntilIdle()
+
+        // Same setting (only SCREEN_TOP is configured for Burst) applied via a fresh ViewModel/
+        // coordinator, but triggered via the bottom half this time.
+        val bottomCamera = FakeCameraCaptureController()
+        val bottomSettings = FakeSettingsRepository(
+            AppSettings(captureModeByTrigger = burstFor(CaptureTriggerKind.SCREEN_TOP), burstIntervalMillis = 250L),
+        )
+        val bottomVm = buildViewModel(camera = bottomCamera, settings = bottomSettings, scheduler = testScheduler)
+        val bottomCollectJob = launch { bottomVm.uiState.collect {} }
+        bottomVm.onScreenTouch(false)
+        advanceUntilIdle()
+
+        assertThat(topCamera.memoryCaptureCount).isEqualTo(BURST_IMAGE_COUNT)
+        assertThat(bottomCamera.captureCount).isEqualTo(1)
+        assertThat(bottomCamera.memoryCaptureCount).isEqualTo(0)
+
+        topCollectJob.cancel()
+        bottomCollectJob.cancel()
     }
 
     @Test
@@ -347,11 +426,13 @@ class CameraViewModelTest {
             if (callCount == 2) CameraCaptureMemoryOutcome.Failure("simulated failure") else CameraCaptureMemoryOutcome.Success(ByteArray(0))
         })
         val haptics = FakeHapticFeedback()
-        val settings = FakeSettingsRepository(AppSettings(captureMode = CaptureMode.BURST, burstIntervalMillis = 250L))
+        val settings = FakeSettingsRepository(
+            AppSettings(captureModeByTrigger = burstFor(CaptureTriggerKind.SCREEN_TOP), burstIntervalMillis = 250L),
+        )
         val vm = buildViewModel(camera = camera, haptics = haptics, settings = settings, scheduler = testScheduler)
         val collectJob = launch { vm.uiState.collect {} }
 
-        vm.onScreenTouch()
+        vm.onScreenTouch(true)
         advanceUntilIdle()
 
         assertThat(camera.memoryCaptureCount).isEqualTo(4)
@@ -368,7 +449,7 @@ class CameraViewModelTest {
 
         assertThat(vm.uiState.value.captureProgress).isEqualTo(CaptureProgressUi.Hidden)
 
-        vm.onScreenTouch()
+        vm.onScreenTouch(true)
         advanceUntilIdle()
 
         assertThat(vm.uiState.value.captureProgress).isEqualTo(CaptureProgressUi.Hidden)
@@ -381,12 +462,14 @@ class CameraViewModelTest {
         // Progress is reported from the capture phase (see CaptureCoordinator.performBurst's
         // kdoc), so by the time execution reaches the first inter-image delay - the earliest point
         // runCurrent() can pause it at - image 1 has already been captured and counted.
-        val settings = FakeSettingsRepository(AppSettings(captureMode = CaptureMode.BURST, burstIntervalMillis = 500L))
+        val settings = FakeSettingsRepository(
+            AppSettings(captureModeByTrigger = burstFor(CaptureTriggerKind.SCREEN_TOP), burstIntervalMillis = 500L),
+        )
         val vm = buildViewModel(settings = settings, scheduler = testScheduler)
         val collectJob = launch { vm.uiState.collect {} }
         advanceUntilIdle()
 
-        vm.onScreenTouch()
+        vm.onScreenTouch(true)
         runCurrent() // starts the burst, captures image 1, and runs up to its first inter-image delay
 
         assertThat(vm.uiState.value.captureProgress).isEqualTo(CaptureProgressUi.Determinate(1, BURST_IMAGE_COUNT))
@@ -399,11 +482,19 @@ class CameraViewModelTest {
     }
 
     @Test
-    fun `flash and torch are disabled while burst mode is active`() = runTest {
-        val settings = FakeSettingsRepository(AppSettings(captureMode = CaptureMode.BURST))
+    fun `flash and torch are disabled while a burst is actually running, not merely configured`() = runTest {
+        // Keyed off the raw CaptureState now (see CameraViewModel's flash/torch collector), not a
+        // settings value - configuring a trigger for Burst Mode alone must not disable flash/torch
+        // until a burst is actually in flight.
+        val settings = FakeSettingsRepository(AppSettings(captureModeByTrigger = burstFor(CaptureTriggerKind.SCREEN_TOP)))
         val flashTorch = FakeFlashTorchController()
         val vm = buildViewModel(settings = settings, flashTorchController = flashTorch, scheduler = testScheduler)
         val collectJob = launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+
+        assertThat(flashTorch.disableCallCount).isEqualTo(0)
+
+        vm.onScreenTouch(true)
         advanceUntilIdle()
 
         assertThat(flashTorch.disableCallCount).isAtLeast(1)
@@ -450,7 +541,7 @@ class CameraViewModelTest {
     fun `a capture-aspect-ratio change made mid-burst does not apply until the burst completes`() = runTest {
         val settings = FakeSettingsRepository(
             AppSettings(
-                captureMode = CaptureMode.BURST,
+                captureModeByTrigger = burstFor(CaptureTriggerKind.SCREEN_TOP),
                 burstIntervalMillis = 500L,
                 captureAspectRatio = CaptureAspectRatio.RATIO_4_3,
             ),
@@ -460,7 +551,7 @@ class CameraViewModelTest {
         advanceUntilIdle()
         assertThat(vm.uiState.value.captureAspectRatio).isEqualTo(CaptureAspectRatio.RATIO_4_3)
 
-        vm.onScreenTouch()
+        vm.onScreenTouch(true)
         runCurrent() // starts the burst and runs it up to its first inter-image delay
 
         settings.setCaptureAspectRatio(CaptureAspectRatio.RATIO_16_9)

@@ -761,17 +761,16 @@ since none of it is fully covered by automated tests:
       the app does not crash and (on returning) the capture either completed or failed cleanly.
 - [ ] **Settings navigation:** the gear icon is reachable from the camera screen regardless of
       permission state; it opens the settings screen; the system/gesture back action returns to
-      the camera screen with its state (capture status, voice toggle) intact.
+      the camera screen with its state (voice toggle) intact.
 - [ ] **Vibration duration setting:** moving the slider changes the felt pulse length on the next
       capture; the value survives an app restart.
 - [ ] **Overlay swipe gestures:** with an image selected, a left swipe on the live preview slides
-      the overlay image in from the right edge and settles over the preview; the capture-status
-      indicator and shutter button both disappear at the same time (the voice control and gear
-      icon stay visible); capture (touch/volume/voice) still works and still saves a real photo
-      while the overlay is shown, even with the shutter button hidden; a right swipe on the overlay
-      slides it back off to the right, restoring the live preview and bringing the status
-      indicator and shutter button back; the slide visibly follows the finger while dragging rather
-      than only snapping at the end.
+      the overlay image in from the right edge and settles over the preview; the shutter button
+      disappears (the voice control, gear icon, and capture progress indicator stay visible);
+      capture (touch/volume/voice) still works and still saves a real photo while the overlay is
+      shown, even with the shutter button hidden; a right swipe on the overlay slides it back off
+      to the right, restoring the live preview and bringing the shutter button back; the slide
+      visibly follows the finger while dragging rather than only snapping at the end.
 - [ ] **Overlay-visibility persistence:** leave the overlay showing (or hidden) and fully close the
       app, then relaunch it - the same mode is restored automatically, with no settings-screen
       control for it anywhere.
@@ -787,6 +786,21 @@ since none of it is fully covered by automated tests:
       an overlapping burst.
 - [ ] **Burst interval setting:** moving the slider changes the felt spacing between photos in the
       next burst; the value survives an app restart.
+- [ ] **Per-trigger capture mode independence:** in Settings, set only Volume Up to Burst Mode
+      (leave every other trigger at Single-Shot); confirm Volume Up produces four photos while
+      tapping the screen, pressing Volume Down, using the shutter button, and voice command each
+      still produce exactly one; repeat with a different single trigger set to Burst to confirm it
+      isn't specific to Volume Up.
+- [ ] **Screen top/bottom split:** with the screen's top-half trigger set to Single-Shot and the
+      bottom-half trigger set to Burst (or vice versa), tapping the top half of the screen and
+      tapping the bottom half produce the correct number of photos for each; the split holds
+      regardless of the selected capture aspect ratio's letterboxing.
+- [ ] **Capture-mode pipeline switch delay:** with two triggers configured for different modes
+      (e.g. Volume Up = Burst, Volume Down = Single-Shot), alternate between them a few times in a
+      row; a brief delay before each capture is expected right when switching between the two
+      (this is the camera pipeline rebinding to the new trigger's mode - see "Capture Mode" in
+      app-spec.md), but repeated presses of the *same* trigger back-to-back should not have that
+      extra delay.
 - [ ] **Flash/torch stay off:** on a device where flash/torch can be observed (e.g. watch for the
       flash LED), confirm it never fires while Burst Mode is active or while the overlay image is
       visible.
@@ -1196,6 +1210,55 @@ bar/notch height on a given device rather than assuming a specific one. `testDeb
 121/121 - Robolectric resolves `statusBarsPadding()` to zero inset in the absence of a real window,
 so no existing assertions were affected), `lintDebug` (0 issues), and `assembleDebug` all passed;
 confirmed fixed via `installDebug` on the connected device.
+
+The single global "Capture Mode" setting was then split into six independent per-trigger settings
+(screen tap top half, screen tap bottom half, shutter button, volume up, volume down, voice
+command), each its own Single-Shot/Burst choice, per a substantially expanded `app-spec.md` "Capture
+Mode" section. `CaptureTrigger.ScreenTouch` became `ScreenTouchTop`/`ScreenTouchBottom`, split by
+comparing a tap's Y position against the gesture surface's own height (`AwaitPointerEventScope.size`,
+confirmed to exist via `javap` against the cached Compose UI AAR rather than assumed) - literal
+screen halves, independent of aspect ratio or letterboxing. A new `CaptureTriggerKind` enum (plain,
+payload-free, unlike `CaptureTrigger` itself) keys the six settings; `AppSettings.captureMode`
+became `captureModeByTrigger: Map<CaptureTriggerKind, CaptureMode>`, and `DataStoreSettingsRepository`
+gained one generated key per trigger rather than a single `capture_mode` key (the old key is simply
+orphaned, not migrated).
+
+The harder problem was the camera pipeline itself: `ImageCapture`'s latency/resolution optimization
+(from the earlier burst-latency work) is a bind-time CameraX configuration shared by every trigger,
+not something choosable per shot. Rather than accept a quality/speed compromise whenever triggers
+disagree, `CameraViewModel.requestCapture` now dynamically rebinds the pipeline to whichever mode the
+firing trigger needs, reusing the same reactive-rebind mechanism `CameraPreview` already had for
+aspect-ratio changes (`ensureCaptureModeBound`, gated by a new `_boundCaptureMode` StateFlow -
+`CameraUiState.captureMode` is repurposed from "the global setting" to "the pipeline's currently
+bound mode"). Switching between differently-configured triggers now costs a one-time rebind delay;
+repeated use of the same trigger, or of triggers sharing a mode, never rebinds. The wait is skippable
+when the pipeline was never bound in the first place (permission not yet granted, `CameraPreview`
+not yet composed) - waiting for a rebind that will never happen would otherwise hang every very-first
+capture request behind a multi-second timeout for no reason.
+
+That mode-per-trigger split broke two existing behaviors that had silently been relying on "capture
+mode" meaning one global, always-current thing: the flash/torch-disable-during-burst logic used to
+key off `CameraUiState.captureMode == BURST` (now just "whichever mode the pipeline is bound for," not
+"a burst is actually running") - fixed to key off the raw `CaptureState` (`BurstStarted`/
+`BurstProgress`) directly instead, which is also a more accurate signal than what was there before.
+Sandbox testing then caught a genuine test-coordinate bug, not a production one: a new bottom-half-tap
+test clicked dead-center horizontally, landing on the shutter button (which, unlike the passive
+gesture surface beneath it, actively consumes its own clicks) instead of the gesture surface under
+test - fixed by moving the test tap off-center. `testDebugUnitTest` (127/127 tests across 10 classes,
+including 6 new cases spanning the coordinator-adjacent trigger rename, the ViewModel's per-trigger
+routing, the screen-half split, and the six-control settings UI), `lintDebug` (0 issues), and
+`assembleDebug` all passed. The dynamic-rebind mechanics themselves aren't unit-testable in the way
+the rest of this logic is - `ImageCapture` is a real CameraX class this project's plain-JVM/Robolectric
+tests can't meaningfully construct - so, consistent with how `CameraPreview.kt` (the only file that
+touches real CameraX use cases) has never had unit coverage of its own binding behavior, that specific
+mechanic needed real-device confirmation instead. `installDebug` plus an `adb logcat` trace of
+pressing Volume Up (configured for Burst) immediately followed by Volume Down (left at Single-Shot)
+confirmed it end to end: Volume Up's request correctly logged `captureMode=BURST` with the resolution
+dropping to the burst-optimized 1920x1440 and all four images saving, and the very next
+`CameraDiagnosticsSnapshot` - before Volume Down's own request - already showed the pipeline rebound
+to full 4080x3060/`SINGLE_SHOT`, which Volume Down's request then correctly used. Two same-diagnostic-
+category triggers (both `VOLUME_BUTTON`), independently resolving to different modes, with the shared
+pipeline correctly rebinding in between - the exact behavior this whole feature exists to provide.
 
 The one command genuinely not run is `./gradlew connectedDebugAndroidTest` - no emulator was
 available in this environment (a physical device was connected and used for manual `adb`-driven

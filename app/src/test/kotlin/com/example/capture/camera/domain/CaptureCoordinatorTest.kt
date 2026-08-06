@@ -67,11 +67,11 @@ class CaptureCoordinatorTest {
         sut.state.test {
             assertThat(awaitItem()).isEqualTo(CaptureState.Idle)
 
-            sut.requestCapture(CaptureTrigger.ScreenTouch)
+            sut.requestCapture(CaptureTrigger.ScreenTouchTop)
 
             val capturing = awaitItem()
             assertThat(capturing).isInstanceOf(CaptureState.Capturing::class.java)
-            assertThat((capturing as CaptureState.Capturing).trigger).isEqualTo(CaptureTrigger.ScreenTouch)
+            assertThat((capturing as CaptureState.Capturing).trigger).isEqualTo(CaptureTrigger.ScreenTouchTop)
 
             val completed = awaitItem() as CaptureState.Completed
             val outcome = completed.result.outcome
@@ -147,7 +147,7 @@ class CaptureCoordinatorTest {
         val sut = buildCoordinator(camera, testScheduler = testScheduler)
 
         val jobs = List(5) {
-            launch { sut.requestCapture(CaptureTrigger.ScreenTouch) }
+            launch { sut.requestCapture(CaptureTrigger.ScreenTouchTop) }
         }
         advanceUntilIdle()
         jobs.forEach { it.join() }
@@ -161,13 +161,13 @@ class CaptureCoordinatorTest {
         val camera = FakeCameraCaptureController()
         val sut = buildCoordinator(camera, testScheduler = testScheduler)
 
-        sut.requestCapture(CaptureTrigger.ScreenTouch, CaptureMode.BURST, burstIntervalMillis = 500L)
+        sut.requestCapture(CaptureTrigger.ScreenTouchTop, CaptureMode.BURST, burstIntervalMillis = 500L)
 
         assertThat(camera.memoryCaptureCount).isEqualTo(BURST_IMAGE_COUNT)
         val completed = sut.state.value as CaptureState.BurstCompleted
         assertThat(completed.results).hasSize(BURST_IMAGE_COUNT)
         assertThat(completed.results).isNotEmpty()
-        completed.results.forEach { assertThat(it.trigger).isEqualTo(CaptureTrigger.ScreenTouch) }
+        completed.results.forEach { assertThat(it.trigger).isEqualTo(CaptureTrigger.ScreenTouchTop) }
     }
 
     @Test
@@ -178,7 +178,7 @@ class CaptureCoordinatorTest {
         sut.state.test {
             assertThat(awaitItem()).isEqualTo(CaptureState.Idle)
 
-            sut.requestCapture(CaptureTrigger.ScreenTouch, CaptureMode.BURST, burstIntervalMillis = 250L)
+            sut.requestCapture(CaptureTrigger.ScreenTouchTop, CaptureMode.BURST, burstIntervalMillis = 250L)
 
             assertThat(awaitItem()).isInstanceOf(CaptureState.BurstStarted::class.java)
             for (expectedCount in 1..BURST_IMAGE_COUNT) {
@@ -195,7 +195,7 @@ class CaptureCoordinatorTest {
         val sut = buildCoordinator(camera, testScheduler = testScheduler)
 
         val before = testScheduler.currentTime
-        sut.requestCapture(CaptureTrigger.ScreenTouch, CaptureMode.BURST, burstIntervalMillis = 500L)
+        sut.requestCapture(CaptureTrigger.ScreenTouchTop, CaptureMode.BURST, burstIntervalMillis = 500L)
         val elapsed = testScheduler.currentTime - before
 
         assertThat(elapsed).isEqualTo((BURST_IMAGE_COUNT - 1) * 500L)
@@ -212,7 +212,7 @@ class CaptureCoordinatorTest {
         val sut = buildCoordinator(camera, testScheduler = testScheduler)
 
         val before = testScheduler.currentTime
-        sut.requestCapture(CaptureTrigger.ScreenTouch, CaptureMode.BURST, burstIntervalMillis = 250L)
+        sut.requestCapture(CaptureTrigger.ScreenTouchTop, CaptureMode.BURST, burstIntervalMillis = 250L)
         val elapsed = testScheduler.currentTime - before
 
         assertThat(elapsed).isEqualTo(0L)
@@ -227,7 +227,7 @@ class CaptureCoordinatorTest {
         val sut = buildCoordinator(camera, testScheduler = testScheduler)
 
         val before = testScheduler.currentTime
-        sut.requestCapture(CaptureTrigger.ScreenTouch, CaptureMode.BURST, burstIntervalMillis = 250L)
+        sut.requestCapture(CaptureTrigger.ScreenTouchTop, CaptureMode.BURST, burstIntervalMillis = 250L)
         val elapsed = testScheduler.currentTime - before
 
         assertThat(elapsed).isEqualTo((BURST_IMAGE_COUNT - 1) * 150L)
@@ -239,7 +239,7 @@ class CaptureCoordinatorTest {
         val sut = buildCoordinator(camera, testScheduler = testScheduler)
 
         val burstJob = launch {
-            sut.requestCapture(CaptureTrigger.ScreenTouch, CaptureMode.BURST, burstIntervalMillis = 500L)
+            sut.requestCapture(CaptureTrigger.ScreenTouchTop, CaptureMode.BURST, burstIntervalMillis = 500L)
         }
         val overlappingJob = launch { sut.requestCapture(CaptureTrigger.VolumeUp) }
         advanceUntilIdle()
@@ -259,7 +259,7 @@ class CaptureCoordinatorTest {
         })
         val sut = buildCoordinator(camera, testScheduler = testScheduler)
 
-        sut.requestCapture(CaptureTrigger.ScreenTouch, CaptureMode.BURST, burstIntervalMillis = 250L)
+        sut.requestCapture(CaptureTrigger.ScreenTouchTop, CaptureMode.BURST, burstIntervalMillis = 250L)
 
         assertThat(camera.memoryCaptureCount).isEqualTo(BURST_IMAGE_COUNT)
         val completed = sut.state.value as CaptureState.BurstCompleted
@@ -295,7 +295,7 @@ class CaptureCoordinatorTest {
         val errorLogger = FakeCaptureErrorLogger()
         val sut = buildCoordinator(camera, errorLogger = errorLogger, testScheduler = testScheduler)
 
-        sut.requestCapture(CaptureTrigger.ScreenTouch, CaptureMode.BURST, burstIntervalMillis = 250L)
+        sut.requestCapture(CaptureTrigger.ScreenTouchTop, CaptureMode.BURST, burstIntervalMillis = 250L)
 
         val entry = errorLogger.loggedEntries.single()
         assertThat(entry.captureMode).isEqualTo(CaptureMode.BURST)
@@ -318,7 +318,7 @@ class CaptureCoordinatorTest {
             testScheduler = testScheduler,
         )
 
-        sut.requestCapture(CaptureTrigger.ScreenTouch, captureAspectRatio = CaptureAspectRatio.RATIO_4_3)
+        sut.requestCapture(CaptureTrigger.ScreenTouchTop, captureAspectRatio = CaptureAspectRatio.RATIO_4_3)
 
         val entry = metadataLogger.loggedEntries.single()
         assertThat(entry.widthPx).isEqualTo(4032)
@@ -345,7 +345,7 @@ class CaptureCoordinatorTest {
             testScheduler = testScheduler,
         )
 
-        sut.requestCapture(CaptureTrigger.ScreenTouch, captureAspectRatio = CaptureAspectRatio.RATIO_4_3)
+        sut.requestCapture(CaptureTrigger.ScreenTouchTop, captureAspectRatio = CaptureAspectRatio.RATIO_4_3)
 
         val entry = metadataLogger.loggedEntries.single()
         assertThat(entry.requestedAspectRatio).isEqualTo(CaptureAspectRatio.RATIO_4_3)
@@ -359,7 +359,7 @@ class CaptureCoordinatorTest {
         val metadataLogger = FakeCaptureMetadataLogger()
         val sut = buildCoordinator(camera, metadataLogger = metadataLogger, testScheduler = testScheduler)
 
-        sut.requestCapture(CaptureTrigger.ScreenTouch)
+        sut.requestCapture(CaptureTrigger.ScreenTouchTop)
 
         assertThat(metadataLogger.loggedEntries).isEmpty()
     }
@@ -376,7 +376,7 @@ class CaptureCoordinatorTest {
             testScheduler = testScheduler,
         )
 
-        sut.requestCapture(CaptureTrigger.ScreenTouch)
+        sut.requestCapture(CaptureTrigger.ScreenTouchTop)
 
         assertThat(metadataLogger.loggedEntries).isEmpty()
     }
@@ -387,7 +387,7 @@ class CaptureCoordinatorTest {
         val metadataLogger = FakeCaptureMetadataLogger()
         val sut = buildCoordinator(camera, metadataLogger = metadataLogger, testScheduler = testScheduler)
 
-        sut.requestCapture(CaptureTrigger.ScreenTouch, CaptureMode.BURST, burstIntervalMillis = 250L)
+        sut.requestCapture(CaptureTrigger.ScreenTouchTop, CaptureMode.BURST, burstIntervalMillis = 250L)
 
         assertThat(metadataLogger.loggedEntries).hasSize(BURST_IMAGE_COUNT)
     }
@@ -398,7 +398,7 @@ class CaptureCoordinatorTest {
         val diagnosticsLogger = FakeCaptureDiagnosticsLogger()
         val sut = buildCoordinator(camera, diagnosticsLogger = diagnosticsLogger, testScheduler = testScheduler)
 
-        sut.requestCapture(CaptureTrigger.ScreenTouch)
+        sut.requestCapture(CaptureTrigger.ScreenTouchTop)
 
         val attemptIds = diagnosticsLogger.loggedEvents.map { it.attemptId }.distinct()
         assertThat(attemptIds).hasSize(1)
@@ -413,7 +413,7 @@ class CaptureCoordinatorTest {
         val diagnosticsLogger = FakeCaptureDiagnosticsLogger()
         val sut = buildCoordinator(camera, diagnosticsLogger = diagnosticsLogger, testScheduler = testScheduler)
 
-        sut.requestCapture(CaptureTrigger.ScreenTouch, CaptureMode.BURST, burstIntervalMillis = 250L)
+        sut.requestCapture(CaptureTrigger.ScreenTouchTop, CaptureMode.BURST, burstIntervalMillis = 250L)
 
         val attemptIds = diagnosticsLogger.loggedEvents.map { it.attemptId }.distinct()
         assertThat(attemptIds).hasSize(1)
@@ -434,7 +434,7 @@ class CaptureCoordinatorTest {
         val sut = buildCoordinator(camera, diagnosticsLogger = diagnosticsLogger, testScheduler = testScheduler)
 
         val burstJob = launch {
-            sut.requestCapture(CaptureTrigger.ScreenTouch, CaptureMode.BURST, burstIntervalMillis = 500L)
+            sut.requestCapture(CaptureTrigger.ScreenTouchTop, CaptureMode.BURST, burstIntervalMillis = 500L)
         }
         val overlappingJob = launch { sut.requestCapture(CaptureTrigger.VolumeUp) }
         advanceUntilIdle()
@@ -457,7 +457,7 @@ class CaptureCoordinatorTest {
             testScheduler = testScheduler,
         )
 
-        sut.requestCapture(CaptureTrigger.ScreenTouch)
+        sut.requestCapture(CaptureTrigger.ScreenTouchTop)
 
         val completed = sut.state.value as CaptureState.Completed
         assertThat(completed.result.attemptId).isEqualTo(diagnosticsLogger.loggedEvents.first().attemptId)
