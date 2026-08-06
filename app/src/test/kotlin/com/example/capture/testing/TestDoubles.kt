@@ -31,9 +31,11 @@ import com.example.capture.settings.domain.SettingsRepository
 import com.example.capture.voice.domain.VoiceCommandRecognizer
 import com.example.capture.voice.domain.VoiceRecognitionState
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import java.io.IOException
 
 /**
@@ -48,9 +50,25 @@ class TestDispatcherProvider(private val dispatcher: CoroutineDispatcher) : Disp
     override val io: CoroutineDispatcher get() = dispatcher
 }
 
+/**
+ * [currentMillis] is a plain settable field so tests can simulate wall-clock time passing between
+ * two separate top-level suspend calls with no real suspension in between (e.g. a debounce-window
+ * test bumping it directly). It does *not* by itself track time spent inside real `delay()` calls
+ * within a single suspend call - [attachScheduler] opts a test into that too, needed by any
+ * production code (e.g. `CaptureCoordinator`'s burst scheduling) whose logic reads elapsed time
+ * *across* multiple `delay()` calls in one call and would otherwise see a frozen clock while the
+ * `TestCoroutineScheduler`'s own virtual time has moved on.
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
 class FakeTimeProvider(startMillis: Long = 0L) : TimeProvider {
     var currentMillis: Long = startMillis
-    override fun currentTimeMillis(): Long = currentMillis
+    private var scheduler: TestCoroutineScheduler? = null
+
+    fun attachScheduler(scheduler: TestCoroutineScheduler) {
+        this.scheduler = scheduler
+    }
+
+    override fun currentTimeMillis(): Long = currentMillis + (scheduler?.currentTime ?: 0L)
 }
 
 /**

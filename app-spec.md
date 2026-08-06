@@ -583,7 +583,12 @@ rather than starting an overlapping burst.
 
 ## Capture Performance
 
-Burst Mode is intended to prioritize responsiveness over maximum image quality. During Burst Mode, the implementation should favor the lowest practical capture latency that still produces normal full-resolution photographs.
+Burst Mode is intended to prioritize responsiveness over maximum image quality. During Burst Mode,
+the implementation should favor the lowest practical capture latency, including capturing at a
+reduced resolution relative to Single-Shot Mode's full sensor resolution, as long as the resulting
+photographs remain clearly usable (not visibly degraded to the user viewing them at normal sizes -
+on a phone screen, shared to messaging apps, or printed at typical small-print sizes). Single-Shot
+Mode's captures are unaffected and remain full sensor resolution.
 
 Single-Shot Mode should use the implementation's default capture behavior unless there is a demonstrated benefit to using a higher-quality capture mode.
 

@@ -33,6 +33,11 @@ class CaptureCoordinatorTest {
         diagnosticsLogger: FakeCaptureDiagnosticsLogger = FakeCaptureDiagnosticsLogger(),
         testScheduler: kotlinx.coroutines.test.TestCoroutineScheduler,
     ): CaptureCoordinator {
+        // Burst scheduling reads elapsed time across multiple delay() calls within one
+        // requestCapture call (see CaptureCoordinator.performBurst) - attaching the scheduler keeps
+        // timeProvider consistent with delay()'s own virtual-time advancement instead of staying
+        // frozen while it happens (see FakeTimeProvider's kdoc).
+        timeProvider.attachScheduler(testScheduler)
         val dispatcher = StandardTestDispatcher(testScheduler)
         return CaptureCoordinator(
             camera,
@@ -166,7 +171,7 @@ class CaptureCoordinatorTest {
     }
 
     @Test
-    fun `burst mode spaces captures by the configured interval`() = runTest {
+    fun `burst mode spaces captures by the configured interval when capture itself is instant`() = runTest {
         val camera = FakeCameraCaptureController()
         val sut = buildCoordinator(camera, testScheduler = testScheduler)
 
@@ -174,7 +179,39 @@ class CaptureCoordinatorTest {
         sut.requestCapture(CaptureTrigger.ScreenTouch, CaptureMode.BURST, burstIntervalMillis = 500L)
         val elapsed = testScheduler.currentTime - before
 
-        assertThat(elapsed).isAtLeast((BURST_IMAGE_COUNT - 1) * 500L)
+        assertThat(elapsed).isEqualTo((BURST_IMAGE_COUNT - 1) * 500L)
+    }
+
+    @Test
+    fun `burst mode adds no delay once capture itself already exceeds the configured interval`() = runTest {
+        // Clock-anchored scheduling: each shot targets a fixed burstStart + n*interval instant, so
+        // a capture that alone takes longer than the interval leaves nothing left to wait for.
+        val camera = FakeCameraCaptureController(memoryOutcome = { _ ->
+            timeProvider.currentMillis += 800L
+            CameraCaptureMemoryOutcome.Success(ByteArray(0))
+        })
+        val sut = buildCoordinator(camera, testScheduler = testScheduler)
+
+        val before = testScheduler.currentTime
+        sut.requestCapture(CaptureTrigger.ScreenTouch, CaptureMode.BURST, burstIntervalMillis = 250L)
+        val elapsed = testScheduler.currentTime - before
+
+        assertThat(elapsed).isEqualTo(0L)
+    }
+
+    @Test
+    fun `burst mode only waits out whatever's left of the interval after a partially-slow capture`() = runTest {
+        val camera = FakeCameraCaptureController(memoryOutcome = { _ ->
+            timeProvider.currentMillis += 100L
+            CameraCaptureMemoryOutcome.Success(ByteArray(0))
+        })
+        val sut = buildCoordinator(camera, testScheduler = testScheduler)
+
+        val before = testScheduler.currentTime
+        sut.requestCapture(CaptureTrigger.ScreenTouch, CaptureMode.BURST, burstIntervalMillis = 250L)
+        val elapsed = testScheduler.currentTime - before
+
+        assertThat(elapsed).isEqualTo((BURST_IMAGE_COUNT - 1) * 150L)
     }
 
     @Test

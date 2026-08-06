@@ -1059,7 +1059,7 @@ interval between them, phase 2 persists each through MediaStore afterward - so n
 metadata read-back sits between one image's capture and the next. `ImageProxy` turned out to
 implement only `java.lang.AutoCloseable`, not `java.io.Closeable` (confirmed via `javap` against the
 cached `camera-core` jar rather than assumed), so it's closed with a plain `try`/`finally` instead of
-Kotlin's `use`. `testDebugUnitTest` (131/131 tests across 11 classes - existing burst tests were
+Kotlin's `use`. `testDebugUnitTest` (112/112 tests across 9 classes - existing burst tests were
 updated to drive the new `captureToMemory`/`memoryOutcome` fake path rather than new tests being
 added), `lintDebug` (0 issues), and `assembleDebug` all passed. `installDebug` plus a fresh
 `adb logcat -s CaptureDiagnostics:I` burst trace confirmed the fix empirically: shot-to-shot cadence
@@ -1072,6 +1072,53 @@ time (unchanged by this fix, and not something a MediaStore-side change can touc
 Accepted-to-Completed burst duration improved from ~4017ms to ~3548ms. Trimming further would mean
 reducing Burst Mode's capture resolution or capturing at a lower JPEG quality, not further storage
 changes.
+
+That capture-resolution lever was tried next, per an `app-spec.md` update reconciling "Capture
+Performance" (which had explicitly required Burst Mode to stay full-resolution) to instead allow a
+reduced resolution as long as photographs remain clearly usable. `CameraPreview.kt`'s
+`ImageCapture.Builder` gained a `ResolutionStrategy` (bound size from a new pure `burstCaptureResolution`
+function, unit-tested directly) applied only in Burst Mode. The first attempt used
+`FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER` targeting 2048x1536 - CameraX resolved this to 3648x2736
+(~10MP) on the test device rather than something near the target, since that device's camera doesn't
+expose a supported capture size close to 2048x1536, only larger discrete modes. A fresh on-device
+`adb logcat` trace showed this ~20%-smaller resolution produced **no measurable latency change**
+(~902ms average shot-to-shot gap vs. the prior ~886ms) - direct evidence that pixel count wasn't the
+bottleneck at that small a reduction, contradicting the initial hypothesis. Switching to
+`FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER` (same 2048x1536 target) resolved to 1920x1440 (~2.8MP)
+instead, and *that* produced a large, unambiguous improvement: shot-to-shot gaps of ~528/518/515ms
+(average ~520ms, down from ~886ms - a ~41% reduction), and Accepted-to-Completed burst duration
+roughly halved, from ~3548ms to ~2011ms. So pixel count does dominate the remaining latency, but only
+once cut aggressively (~2.8MP vs. the sensor's ~12.5MP full resolution) - a ~20% trim wasn't enough to
+clear whatever fixed per-frame overhead (AE/AF settling, pipeline startup) sits underneath it.
+`testDebugUnitTest` (114/114 tests across 10 classes, including the two new
+`BurstCaptureResolutionTest` cases), `lintDebug` (0 issues), and `assembleDebug` all passed on the
+final (`CLOSEST_LOWER_THEN_HIGHER`) version.
+
+Burst Mode's scheduling itself was reworked next: `CaptureCoordinator.performBurst`'s capture-phase
+loop previously called `delay(burstIntervalMillis)` unconditionally after each image, so real
+shot-to-shot time was always `capture time + configured interval`, stacked serially. It's now
+clock-anchored to a fixed schedule (`burstStart + n * burstIntervalMillis`) - each iteration waits
+only for whatever time remains until its scheduled instant, so a capture that already took longer
+than the interval (the common case per the measurements above) is followed by no delay at all,
+matching "Burst Mode"'s existing "the configured interval is a target, not a guarantee" wording
+without needing a spec change. This surfaced a real gap in the test doubles: `FakeTimeProvider` is a
+manually-driven fake clock that doesn't auto-advance when a real `delay()` call completes, unlike
+production's real `TimeProvider`, so scheduling logic that reads elapsed time *across* multiple
+`delay()` calls within one suspend call (exactly what the new clock-anchored loop does) would see a
+frozen clock while `TestCoroutineScheduler`'s own virtual time had actually moved on - silently
+producing incorrect (growing) delay computations that the existing `isAtLeast`-based burst-spacing
+test wasn't tight enough to catch. `FakeTimeProvider` gained an opt-in `attachScheduler` that folds
+the `TestCoroutineScheduler`'s virtual time into `currentTimeMillis()`, wired up in both
+`CaptureCoordinatorTest` and `CameraViewModelTest`; the existing spacing test was tightened from
+`isAtLeast` to an exact `isEqualTo` (it now computes precisely, not just a lower bound), and two new
+tests cover the no-delay-when-overrun and partial-delay cases directly. `testDebugUnitTest` (116/116
+tests across 10 classes), `lintDebug` (0 issues), and `assembleDebug` all passed. A fresh on-device
+`adb logcat` burst trace confirmed a large real-world win on top of the resolution change: shot-to-shot
+gaps dropped from ~528/518/515ms (fixed delay, ~2.8MP resolution) to ~279/269/281ms (clock-anchored,
+same resolution) - about a further 47% reduction - and Accepted-to-Completed burst duration fell from
+~2011ms to ~1306ms. Combined across this session's three changes (deferred MediaStore writes, reduced
+Burst Mode resolution, clock-anchored scheduling), average shot-to-shot cadence went from ~1072ms to
+~276ms - a roughly 74% reduction overall.
 
 The one command genuinely not run is `./gradlew connectedDebugAndroidTest` - no emulator was
 available in this environment (a physical device was connected and used for manual `adb`-driven

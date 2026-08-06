@@ -79,7 +79,7 @@ class CameraViewModelTest {
         val coordinator = CaptureCoordinator(
             camera,
             storage,
-            FakeTimeProvider(),
+            FakeTimeProvider().apply { attachScheduler(scheduler) },
             TestDispatcherProvider(dispatcher),
             errorLogger,
             imageMetadataReader,

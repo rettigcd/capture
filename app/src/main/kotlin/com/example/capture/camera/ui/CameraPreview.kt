@@ -1,6 +1,7 @@
 package com.example.capture.camera.ui
 
 import android.util.Rational
+import android.util.Size
 import android.view.OrientationEventListener
 import android.view.Surface
 import androidx.camera.compose.CameraXViewfinder
@@ -13,6 +14,7 @@ import androidx.camera.core.UseCaseGroup
 import androidx.camera.core.ViewPort
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.lifecycle.awaitInstance
 import androidx.compose.runtime.Composable
@@ -82,14 +84,32 @@ fun CameraPreview(
             .build()
             .apply { setSurfaceProvider { request -> surfaceRequest = request } }
     }
-    // Burst Mode explicitly asks for CameraX's lowest-latency capture pipeline (see "Capture
-    // Performance" in app-spec.md); Single-Shot Mode leaves CameraX's own default alone rather
-    // than assuming it already matches. A built ImageCapture's capture mode (and resolution
-    // selector) can't be changed afterward, so a capture-mode or aspect-ratio change rebuilds
-    // (and, below, rebinds) it instead.
+    // Burst Mode explicitly asks for CameraX's lowest-latency capture pipeline and a reduced
+    // capture resolution (see "Capture Performance" in app-spec.md: full sensor resolution is
+    // Single-Shot-only) - on-device measurement (see README's "Build verification") showed capture
+    // hardware latency, not MediaStore I/O, dominates burst shot-to-shot cadence, and that latency
+    // scales with pixel count. Single-Shot Mode leaves CameraX's own defaults alone rather than
+    // assuming they already match. A built ImageCapture's capture mode/resolution selector can't be
+    // changed afterward, so a capture-mode or aspect-ratio change rebuilds (and, below, rebinds) it
+    // instead.
     val imageCaptureUseCase = remember(captureMode, captureAspectRatio) {
         ImageCapture.Builder()
-            .setResolutionSelector(ResolutionSelector.Builder().setAspectRatioStrategy(aspectRatioStrategy).build())
+            .setResolutionSelector(
+                ResolutionSelector.Builder()
+                    .setAspectRatioStrategy(aspectRatioStrategy)
+                    .apply {
+                        if (captureMode == CaptureMode.BURST) {
+                            val resolution = burstCaptureResolution(captureAspectRatio)
+                            setResolutionStrategy(
+                                ResolutionStrategy(
+                                    Size(resolution.width, resolution.height),
+                                    ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER,
+                                ),
+                            )
+                        }
+                    }
+                    .build(),
+            )
             .apply { if (captureMode == CaptureMode.BURST) setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY) }
             .build()
     }
@@ -166,6 +186,26 @@ fun CameraPreview(
     surfaceRequest?.let { request ->
         CameraXViewfinder(surfaceRequest = request, modifier = modifier)
     }
+}
+
+/**
+ * A plain (non-`android.util.Size`) pixel-dimension pair, kept separate from [android.util.Size]
+ * so [burstCaptureResolution] stays a plain top-level function a JVM unit test can call directly -
+ * `android.util.Size`'s methods are stubbed in that environment the same way any other
+ * `android.*` class's are (see [surfaceRotationFor] for the same reasoning applied to `Surface`
+ * constants, which are plain `Int`s and don't have this problem).
+ */
+internal data class PixelSize(val width: Int, val height: Int)
+
+/**
+ * The reduced capture resolution Burst Mode requests instead of the sensor's full resolution (see
+ * "Capture Performance" in app-spec.md) - chosen as a standard, recognizable resolution per aspect
+ * ratio that's still clearly usable at normal viewing/sharing/small-print sizes while being a small
+ * fraction of the ~12MP full-resolution pixel count that dominates capture latency.
+ */
+internal fun burstCaptureResolution(captureAspectRatio: CaptureAspectRatio): PixelSize = when (captureAspectRatio) {
+    CaptureAspectRatio.RATIO_4_3 -> PixelSize(2048, 1536)
+    CaptureAspectRatio.RATIO_16_9 -> PixelSize(1920, 1080)
 }
 
 /**

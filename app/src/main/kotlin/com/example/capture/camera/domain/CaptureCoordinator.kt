@@ -139,11 +139,22 @@ class CaptureCoordinator @Inject constructor(
      * regardless of prior results.
      *
      * Two-phase, unlike [performSingleShot]/[performCapture]: phase 1 captures all
-     * [BURST_IMAGE_COUNT] images to memory back-to-back (only [burstIntervalMillis] between them -
-     * no MediaStore reservation/write/finalize or metadata read-back in this loop), then phase 2
-     * persists each of them through [PhotoStorage] after the timing-sensitive part is over. This is
-     * what keeps the shot-to-shot cadence close to the camera hardware's own capture latency instead
-     * of that latency plus a MediaStore round trip per image.
+     * [BURST_IMAGE_COUNT] images to memory back-to-back (only whatever's left of
+     * [burstIntervalMillis] between them - no MediaStore reservation/write/finalize or metadata
+     * read-back in this loop), then phase 2 persists each of them through [PhotoStorage] after the
+     * timing-sensitive part is over. This is what keeps the shot-to-shot cadence close to the camera
+     * hardware's own capture latency instead of that latency plus a MediaStore round trip per image.
+     *
+     * The capture-phase loop is clock-anchored to a fixed schedule (`burstStart + n *
+     * burstIntervalMillis`) rather than unconditionally `delay(burstIntervalMillis)`-ing after each
+     * capture: each iteration only waits for whatever time remains until its scheduled instant, so a
+     * capture that already took longer than [burstIntervalMillis] (the common case - see README's
+     * "Build verification") is followed by no delay at all instead of stacking a full interval on
+     * top, and delays don't compound across images the way they would if each one were computed
+     * relative to when the *previous* capture happened to finish. [burstIntervalMillis] is honored
+     * whenever the camera can keep up; when it can't, capturing as fast as possible is the best this
+     * can do (see "Burst Mode" in app-spec.md: "The configured interval is a target, not a
+     * guarantee").
      */
     private suspend fun performBurst(
         trigger: CaptureTrigger,
@@ -153,14 +164,17 @@ class CaptureCoordinator @Inject constructor(
     ) {
         _state.value = CaptureState.BurstStarted(trigger, attemptId)
         val captures = mutableListOf<BurstCapture>()
+        var nextShotAtMillis = timeProvider.currentTimeMillis()
         for (imageNumber in 1..BURST_IMAGE_COUNT) {
+            val now = timeProvider.currentTimeMillis()
+            if (now < nextShotAtMillis) delay(nextShotAtMillis - now)
+            nextShotAtMillis += burstIntervalMillis
             val timestampMillis = timeProvider.currentTimeMillis()
             diagnosticsLogger.logEvent(
                 CaptureDiagnosticEvent.CameraXRequestSubmitted(attemptId, timeProvider.currentTimeMillis(), imageNumber),
             )
             val outcome = cameraCaptureController.captureToMemory(attemptId)
             captures += BurstCapture(imageNumber, timestampMillis, outcome)
-            if (imageNumber < BURST_IMAGE_COUNT) delay(burstIntervalMillis)
         }
         val results = captures.map { capture ->
             persistBurstCapture(trigger, burstIntervalMillis, captureAspectRatio, attemptId, capture)
