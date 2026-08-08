@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Scopes FileProvider to exactly the internal-storage root the encryption key backup file
+    (KeyPair.kkey) lives in - nothing broader is exposed. "files-path" maps to Context.filesDir,
+    matching FileKeyBackupRepository's key file location.
+-->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <files-path name="key_backup" path="." />
+</paths>

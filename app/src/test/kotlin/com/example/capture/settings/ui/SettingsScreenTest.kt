@@ -3,7 +3,10 @@ package com.example.capture.settings.ui
 import android.app.Application
 import android.content.Context
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -42,6 +45,9 @@ class SettingsScreenTest {
         onBurstIntervalChanged: (Long) -> Unit = {},
         onCaptureAspectRatioChanged: (CaptureAspectRatio) -> Unit = {},
         onDiagnosticsFileLoggingChanged: (Boolean) -> Unit = {},
+        onEncryptSavedPhotosChanged: (Boolean) -> Unit = {},
+        onChooseEncryptedPhotosFolderClick: () -> Unit = {},
+        onNavigateToEncryptionKey: () -> Unit = {},
         onBack: () -> Unit = {},
     ) {
         composeTestRule.setContent {
@@ -53,6 +59,9 @@ class SettingsScreenTest {
                 onBurstIntervalChanged = onBurstIntervalChanged,
                 onCaptureAspectRatioChanged = onCaptureAspectRatioChanged,
                 onDiagnosticsFileLoggingChanged = onDiagnosticsFileLoggingChanged,
+                onEncryptSavedPhotosChanged = onEncryptSavedPhotosChanged,
+                onChooseEncryptedPhotosFolderClick = onChooseEncryptedPhotosFolderClick,
+                onNavigateToEncryptionKey = onNavigateToEncryptionKey,
                 onBack = onBack,
             )
         }
@@ -71,19 +80,22 @@ class SettingsScreenTest {
     fun noImageSelectedMessage_isShown_whenNoImageHasBeenPicked() {
         setScreen(SettingsUiState(overlayImageUriString = null))
 
-        composeTestRule.onNodeWithText(context.getString(R.string.settings_no_image_selected)).assertIsDisplayed()
+        composeTestRule.onNodeWithText(context.getString(R.string.settings_no_image_selected))
+            .performScrollTo()
+            .assertIsDisplayed()
     }
 
     @Test
     fun noOverlayVisibilityControlExists_onTheSettingsScreen() {
         // Overlay visibility is controlled exclusively by a swipe gesture on the camera screen -
-        // the only toggle on this screen is the diagnostics-file-logging switch (see
-        // "Diagnostic Persistence" in app-spec.md); there must be no separate one for the overlay.
+        // the only toggles on this screen are "Encrypt saved photos" and the diagnostics-file-
+        // logging switch (see "Diagnostic Persistence" in app-spec.md); there must be no separate
+        // one for the overlay.
         setScreen(SettingsUiState())
 
         assertThat(
             composeTestRule.onAllNodes(isToggleable()).fetchSemanticsNodes(atLeastOneRootRequired = false),
-        ).hasSize(1)
+        ).hasSize(2)
     }
 
     @Test
@@ -94,7 +106,7 @@ class SettingsScreenTest {
             onDiagnosticsFileLoggingChanged = { enabled = it },
         )
 
-        composeTestRule.onNode(isToggleable())
+        composeTestRule.onNodeWithTag("diagnostics_file_logging_switch")
             .performScrollTo()
             .performClick()
 
@@ -106,7 +118,9 @@ class SettingsScreenTest {
         var clickCount = 0
         setScreen(SettingsUiState(), onPickImageClick = { clickCount++ })
 
-        composeTestRule.onNodeWithText(context.getString(R.string.settings_choose_image_button)).performClick()
+        composeTestRule.onNodeWithText(context.getString(R.string.settings_choose_image_button))
+            .performScrollTo()
+            .performClick()
 
         assertThat(clickCount).isEqualTo(1)
     }
@@ -146,6 +160,27 @@ class SettingsScreenTest {
         composeTestRule.onNodeWithTag("capture_mode_volume_up_burst").performScrollTo().performClick()
 
         assertThat(changed).isEqualTo(CaptureTriggerKind.VOLUME_UP to CaptureMode.BURST)
+    }
+
+    @Test
+    fun allSixCaptureModeTriggers_showAVideoOption() {
+        setScreen(SettingsUiState())
+
+        for (trigger in CaptureTriggerKind.entries) {
+            composeTestRule.onNodeWithTag("capture_mode_${trigger.name.lowercase()}_video")
+                .performScrollTo()
+                .assertIsDisplayed()
+        }
+    }
+
+    @Test
+    fun selectingVideoForOneTrigger_invokesCallbackWithOnlyThatTrigger() {
+        var changed: Pair<CaptureTriggerKind, CaptureMode>? = null
+        setScreen(SettingsUiState(), onCaptureModeChanged = { trigger, mode -> changed = trigger to mode })
+
+        composeTestRule.onNodeWithTag("capture_mode_volume_up_video").performScrollTo().performClick()
+
+        assertThat(changed).isEqualTo(CaptureTriggerKind.VOLUME_UP to CaptureMode.VIDEO)
     }
 
     @Test
@@ -192,5 +227,51 @@ class SettingsScreenTest {
             .performClick()
 
         assertThat(backCount).isEqualTo(1)
+    }
+
+    @Test
+    fun encryptSavedPhotosSwitch_isDisabled_whenNoKeyFileExists() {
+        setScreen(SettingsUiState(encryptSavedPhotosAvailable = false))
+
+        composeTestRule.onNodeWithTag("encrypt_saved_photos_switch").assertIsNotEnabled()
+        composeTestRule
+            .onNodeWithText(context.getString(R.string.settings_encrypt_saved_photos_unavailable_message))
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun encryptSavedPhotosSwitch_isEnabled_whenAKeyFileExists_andReflectsTheCurrentValue() {
+        setScreen(SettingsUiState(encryptSavedPhotosAvailable = true, encryptSavedPhotos = true))
+
+        composeTestRule.onNodeWithTag("encrypt_saved_photos_switch").assertIsEnabled().assertIsOn()
+    }
+
+    @Test
+    fun togglingEncryptSavedPhotos_invokesCallback() {
+        var enabled: Boolean? = null
+        setScreen(
+            SettingsUiState(encryptSavedPhotosAvailable = true, encryptSavedPhotos = false),
+            onEncryptSavedPhotosChanged = { enabled = it },
+        )
+
+        composeTestRule.onNodeWithTag("encrypt_saved_photos_switch").performClick()
+
+        assertThat(enabled).isTrue()
+    }
+
+    @Test
+    fun chooseFolderButton_showsChooseLabel_whenNoFolderIsPicked_andChangeLabel_onceOneIs() {
+        setScreen(SettingsUiState(hasEncryptedPhotosFolder = false))
+        composeTestRule.onNodeWithText(context.getString(R.string.settings_choose_encrypted_photos_folder_button)).assertIsDisplayed()
+    }
+
+    @Test
+    fun chooseFolderButton_invokesCallback() {
+        var clickCount = 0
+        setScreen(SettingsUiState(hasEncryptedPhotosFolder = true), onChooseEncryptedPhotosFolderClick = { clickCount++ })
+
+        composeTestRule.onNodeWithText(context.getString(R.string.settings_change_encrypted_photos_folder_button)).performClick()
+
+        assertThat(clickCount).isEqualTo(1)
     }
 }

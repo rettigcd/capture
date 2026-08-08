@@ -3,7 +3,9 @@ package com.example.capture.settings.ui
 import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.camera.domain.CaptureTriggerKind
+import com.example.capture.security.domain.KeySessionState
 import com.example.capture.settings.domain.AppSettings
+import com.example.capture.testing.FakeKeySessionRepository
 import com.example.capture.testing.FakeOverlayImageStore
 import com.example.capture.testing.FakeSettingsRepository
 import com.google.common.truth.Truth.assertThat
@@ -43,7 +45,8 @@ class SettingsViewModelTest {
     private fun buildViewModel(
         repository: FakeSettingsRepository,
         overlayImageStore: FakeOverlayImageStore = FakeOverlayImageStore(),
-    ): SettingsViewModel = SettingsViewModel(repository, overlayImageStore, CoroutineScope(mainDispatcher))
+        keySessionRepository: FakeKeySessionRepository = FakeKeySessionRepository().apply { emit(KeySessionState(hasKeyFile = true)) },
+    ): SettingsViewModel = SettingsViewModel(repository, overlayImageStore, keySessionRepository, CoroutineScope(mainDispatcher))
 
     @Test
     fun `initial ui state reflects the repository's defaults`() = runTest {
@@ -237,5 +240,125 @@ class SettingsViewModelTest {
 
         assertThat(repository.settings.value.overlayImageUriString)
             .isEqualTo("file://fake/persisted/content://fake/still-persisted")
+    }
+
+    @Test
+    fun `encryptSavedPhotosAvailable reflects whether a key file exists`() = runTest {
+        val keySessionRepository = FakeKeySessionRepository().apply { emit(KeySessionState(hasKeyFile = false)) }
+        val vm = buildViewModel(FakeSettingsRepository(), keySessionRepository = keySessionRepository)
+        val collectJob = launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.encryptSavedPhotosAvailable).isFalse()
+
+        keySessionRepository.emit(KeySessionState(hasKeyFile = true))
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.encryptSavedPhotosAvailable).isTrue()
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `turning on encrypt saved photos with no folder yet picked launches the folder picker instead of persisting true`() = runTest {
+        val repository = FakeSettingsRepository()
+        val vm = buildViewModel(repository)
+        val collectJob = launch { vm.uiState.collect {} }
+        val events = mutableListOf<SettingsEvent>()
+        val eventsJob = launch { vm.events.collect { events += it } }
+
+        vm.onEncryptSavedPhotosToggled(true)
+        advanceUntilIdle()
+
+        assertThat(events).containsExactly(SettingsEvent.LaunchFolderPicker)
+        assertThat(repository.settings.value.encryptSavedPhotos).isFalse()
+
+        collectJob.cancel()
+        eventsJob.cancel()
+    }
+
+    @Test
+    fun `turning on encrypt saved photos with a folder already picked persists true without launching the picker`() = runTest {
+        val repository = FakeSettingsRepository(AppSettings(encryptedPhotosFolderUriString = "content://fake/tree/existing"))
+        val vm = buildViewModel(repository)
+        val collectJob = launch { vm.uiState.collect {} }
+        val events = mutableListOf<SettingsEvent>()
+        val eventsJob = launch { vm.events.collect { events += it } }
+
+        vm.onEncryptSavedPhotosToggled(true)
+        advanceUntilIdle()
+
+        assertThat(events).isEmpty()
+        assertThat(repository.settings.value.encryptSavedPhotos).isTrue()
+
+        collectJob.cancel()
+        eventsJob.cancel()
+    }
+
+    @Test
+    fun `turning off encrypt saved photos persists false and leaves the picked folder untouched`() = runTest {
+        val repository = FakeSettingsRepository(
+            AppSettings(encryptSavedPhotos = true, encryptedPhotosFolderUriString = "content://fake/tree/existing"),
+        )
+        val vm = buildViewModel(repository)
+        val collectJob = launch { vm.uiState.collect {} }
+
+        vm.onEncryptSavedPhotosToggled(false)
+        advanceUntilIdle()
+
+        assertThat(repository.settings.value.encryptSavedPhotos).isFalse()
+        assertThat(repository.settings.value.encryptedPhotosFolderUriString).isEqualTo("content://fake/tree/existing")
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `picking a folder persists its uri and turns encryption on`() = runTest {
+        val repository = FakeSettingsRepository()
+        val vm = buildViewModel(repository)
+        val collectJob = launch { vm.uiState.collect {} }
+
+        vm.onEncryptedPhotosFolderPicked("content://fake/tree/new")
+        advanceUntilIdle()
+
+        assertThat(repository.settings.value.encryptedPhotosFolderUriString).isEqualTo("content://fake/tree/new")
+        assertThat(repository.settings.value.encryptSavedPhotos).isTrue()
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `cancelling the folder picker does not change any setting`() = runTest {
+        val repository = FakeSettingsRepository()
+        val vm = buildViewModel(repository)
+        val collectJob = launch { vm.uiState.collect {} }
+
+        vm.onEncryptedPhotosFolderPicked(null)
+        advanceUntilIdle()
+
+        assertThat(repository.settings.value.encryptedPhotosFolderUriString).isNull()
+        assertThat(repository.settings.value.encryptSavedPhotos).isFalse()
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `the key file going missing reactively turns off a previously-enabled encrypt saved photos setting`() = runTest {
+        val repository = FakeSettingsRepository(
+            AppSettings(encryptSavedPhotos = true, encryptedPhotosFolderUriString = "content://fake/tree"),
+        )
+        val keySessionRepository = FakeKeySessionRepository().apply { emit(KeySessionState(hasKeyFile = true)) }
+        val vm = buildViewModel(repository, keySessionRepository = keySessionRepository)
+        val collectJob = launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+        assertThat(repository.settings.value.encryptSavedPhotos).isTrue()
+
+        keySessionRepository.emit(KeySessionState(hasKeyFile = false))
+        advanceUntilIdle()
+
+        assertThat(repository.settings.value.encryptSavedPhotos).isFalse()
+        // The folder itself is left alone - only the toggle is cleared.
+        assertThat(repository.settings.value.encryptedPhotosFolderUriString).isEqualTo("content://fake/tree")
+
+        collectJob.cancel()
     }
 }

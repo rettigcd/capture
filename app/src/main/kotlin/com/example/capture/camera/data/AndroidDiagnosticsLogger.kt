@@ -145,6 +145,7 @@ class AndroidDiagnosticsLogger @Inject constructor(
                 put("errorMessage", event.errorMessage)
                 put("reason", event.reason.name)
             }
+            is CaptureDiagnosticEvent.VideoStopRequested -> {}
         }
     }.toString()
 

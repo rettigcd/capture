@@ -17,6 +17,11 @@ import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.lifecycle.awaitInstance
+import androidx.camera.video.FallbackStrategy
+import androidx.camera.video.Quality
+import androidx.camera.video.QualitySelector
+import androidx.camera.video.Recorder
+import androidx.camera.video.VideoCapture
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -47,7 +52,9 @@ import com.example.capture.camera.domain.CaptureMode
  * the locked window) is used instead; see the "Orientation changes" section this satisfies.
  *
  * [onImageCaptureReady] hands the bound `ImageCapture` use case to
- * [com.example.capture.camera.data.ImageCaptureUseCaseHolder], and [onCameraReady] hands the bound
+ * [com.example.capture.camera.data.ImageCaptureUseCaseHolder], [onVideoCaptureReady] hands the
+ * bound `VideoCapture<Recorder>` use case to
+ * [com.example.capture.camera.data.VideoCaptureUseCaseHolder], and [onCameraReady] hands the bound
  * `Camera` to [com.example.capture.camera.data.CameraControlHolder] (both via `CameraViewModel`),
  * so [com.example.capture.camera.domain.CaptureCoordinator] and
  * [com.example.capture.camera.domain.FlashTorchController] - which know nothing about Compose or
@@ -59,6 +66,7 @@ fun CameraPreview(
     captureAspectRatio: CaptureAspectRatio,
     modifier: Modifier = Modifier,
     onImageCaptureReady: (ImageCapture?) -> Unit,
+    onVideoCaptureReady: (VideoCapture<Recorder>?) -> Unit,
     onCameraReady: (Camera?) -> Unit,
     onCameraDiagnostics: (CameraDiagnosticsSnapshot) -> Unit = {},
 ) {
@@ -114,6 +122,18 @@ fun CameraPreview(
             .build()
     }
 
+    // Bound alongside Preview/ImageCapture regardless of captureMode/captureAspectRatio (unlike
+    // imageCaptureUseCase above): Video Mode doesn't need Burst Mode's reduced-resolution/
+    // low-latency treatment, so there's no per-mode configuration that would require rebuilding
+    // this use case - it's built once and just re-added to whichever UseCaseGroup gets bound
+    // next (see "Video Mode" in app-spec.md).
+    val videoCaptureUseCase = remember {
+        val recorder = Recorder.Builder()
+            .setQualitySelector(QualitySelector.from(Quality.FHD, FallbackStrategy.higherQualityOrLowerThan(Quality.FHD)))
+            .build()
+        VideoCapture.withOutput(recorder)
+    }
+
     LaunchedEffect(lifecycleOwner, captureMode, captureAspectRatio) {
         val cameraProvider = ProcessCameraProvider.awaitInstance(context)
         cameraProvider.unbindAll()
@@ -132,9 +152,11 @@ fun CameraPreview(
             .setViewPort(viewPort)
             .addUseCase(previewUseCase)
             .addUseCase(imageCaptureUseCase)
+            .addUseCase(videoCaptureUseCase)
             .build()
         val camera = cameraProvider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, useCaseGroup)
         onImageCaptureReady(imageCaptureUseCase)
+        onVideoCaptureReady(videoCaptureUseCase)
         onCameraReady(camera)
         onCameraDiagnostics(
             cameraDiagnosticsSnapshot(previewUseCase, imageCaptureUseCase, captureAspectRatio, rotation, rotation, captureMode),
@@ -179,6 +201,7 @@ fun CameraPreview(
     DisposableEffect(Unit) {
         onDispose {
             onImageCaptureReady(null)
+            onVideoCaptureReady(null)
             onCameraReady(null)
         }
     }

@@ -3,6 +3,7 @@ package com.example.capture.camera.domain
 import com.example.capture.common.DispatcherProvider
 import com.example.capture.common.TimeProvider
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,14 +29,16 @@ import javax.inject.Singleton
  * [CaptureDiagnosticEvent.CameraXRequestSubmitted.burstImageNumber].
  *
  * Deliberately has no Android or Compose imports so it can be constructed and driven from a plain
- * JUnit test with fakes for [CameraCaptureController], [PhotoStorage], [CaptureErrorLogger],
- * [ImageMetadataReader], [CaptureMetadataLogger], [CaptureAttemptIdGenerator], and
- * [CaptureDiagnosticsLogger].
+ * JUnit test with fakes for [CameraCaptureController], [PhotoStorage], [EncryptedPhotoStorage],
+ * [CaptureErrorLogger], [ImageMetadataReader], [CaptureMetadataLogger],
+ * [CaptureAttemptIdGenerator], and [CaptureDiagnosticsLogger].
  */
 @Singleton
 class CaptureCoordinator @Inject constructor(
     private val cameraCaptureController: CameraCaptureController,
+    private val videoCaptureController: VideoCaptureController,
     private val photoStorage: PhotoStorage,
+    private val encryptedPhotoStorage: EncryptedPhotoStorage,
     private val timeProvider: TimeProvider,
     private val dispatcherProvider: DispatcherProvider,
     private val errorLogger: CaptureErrorLogger,
@@ -57,6 +60,17 @@ class CaptureCoordinator @Inject constructor(
     private var activeCaptureMode: CaptureMode? = null
 
     /**
+     * Non-null exactly while a Video Mode recording is in progress - i.e. while [mutex] is held by
+     * [performVideo]. Any trigger that arrives while this is set stops the recording instead of
+     * being rejected as busy (see "Video Mode" in app-spec.md: "any trigger stops an in-progress
+     * recording", regardless of that trigger's own configured [CaptureMode]).
+     */
+    @Volatile
+    private var activeVideo: ActiveVideo? = null
+
+    private data class ActiveVideo(val attemptId: CaptureAttemptId, val stopSignal: CompletableDeferred<Unit>)
+
+    /**
      * Requests a capture for [trigger]. [mutex.tryLock] (rather than a blocking `lock`) is used so
      * a request that arrives while a capture - or an entire burst - is already in flight is
      * dropped immediately instead of queuing to run afterward; this is what satisfies "a capture
@@ -71,6 +85,7 @@ class CaptureCoordinator @Inject constructor(
         captureMode: CaptureMode = CaptureMode.SINGLE_SHOT,
         burstIntervalMillis: Long = 0L,
         captureAspectRatio: CaptureAspectRatio = CaptureAspectRatio.RATIO_4_3,
+        encryptSaves: Boolean = false,
     ) {
         withContext(dispatcherProvider.default) {
             val attemptId = captureAttemptIdGenerator.generate()
@@ -84,6 +99,14 @@ class CaptureCoordinator @Inject constructor(
                 ),
             )
             if (!mutex.tryLock()) {
+                val runningVideo = activeVideo
+                if (runningVideo != null) {
+                    diagnosticsLogger.logEvent(
+                        CaptureDiagnosticEvent.VideoStopRequested(runningVideo.attemptId, timeProvider.currentTimeMillis()),
+                    )
+                    runningVideo.stopSignal.complete(Unit)
+                    return@withContext
+                }
                 val reason = if (activeCaptureMode == CaptureMode.BURST) {
                     CaptureRejectionReason.BURST_ALREADY_RUNNING
                 } else {
@@ -107,8 +130,9 @@ class CaptureCoordinator @Inject constructor(
                 lastAcceptedAtMillis = now
                 diagnosticsLogger.logEvent(CaptureDiagnosticEvent.Accepted(attemptId, now))
                 when (captureMode) {
-                    CaptureMode.SINGLE_SHOT -> performSingleShot(trigger, now, captureAspectRatio, attemptId)
-                    CaptureMode.BURST -> performBurst(trigger, burstIntervalMillis, captureAspectRatio, attemptId)
+                    CaptureMode.SINGLE_SHOT -> performSingleShot(trigger, now, captureAspectRatio, attemptId, encryptSaves)
+                    CaptureMode.BURST -> performBurst(trigger, burstIntervalMillis, captureAspectRatio, attemptId, encryptSaves)
+                    CaptureMode.VIDEO -> performVideo(trigger, now, attemptId)
                 }
             } finally {
                 activeCaptureMode = null
@@ -122,14 +146,41 @@ class CaptureCoordinator @Inject constructor(
         timestampMillis: Long,
         captureAspectRatio: CaptureAspectRatio,
         attemptId: CaptureAttemptId,
+        encryptSaves: Boolean,
     ) {
         _state.value = CaptureState.Capturing(trigger, attemptId)
         val context = CaptureContext(CaptureMode.SINGLE_SHOT, burstImageNumber = null, burstIntervalMillis = null, captureAspectRatio, attemptId)
-        val result = performCapture(trigger, timestampMillis, context)
+        // Plaintext Single-Shot writes straight into a reserved MediaStore entry's OutputStream
+        // (performCapture/captureTo) - no bytes ever reach app memory, which is the fastest path
+        // and stays completely unchanged. Encrypting needs the bytes in hand first, so it's
+        // rerouted through captureToMemory instead, the same shape Burst already uses.
+        val result = if (encryptSaves) {
+            performCaptureToMemoryThenPersist(trigger, timestampMillis, context, encryptSaves = true)
+        } else {
+            performCapture(trigger, timestampMillis, context)
+        }
         diagnosticsLogger.logEvent(
             CaptureDiagnosticEvent.Completed(attemptId, timeProvider.currentTimeMillis(), result.outcome is CaptureOutcome.Success),
         )
         _state.value = CaptureState.Completed(result)
+    }
+
+    private suspend fun performCaptureToMemoryThenPersist(
+        trigger: CaptureTrigger,
+        timestampMillis: Long,
+        context: CaptureContext,
+        encryptSaves: Boolean,
+    ): CaptureResult {
+        diagnosticsLogger.logEvent(
+            CaptureDiagnosticEvent.CameraXRequestSubmitted(context.attemptId, timeProvider.currentTimeMillis(), context.burstImageNumber),
+        )
+        return when (val outcome = cameraCaptureController.captureToMemory(context.attemptId)) {
+            is CameraCaptureMemoryOutcome.Success -> persistCapturedBytes(outcome.jpegBytes, trigger, timestampMillis, context, encryptSaves)
+            is CameraCaptureMemoryOutcome.Failure -> {
+                logError(timestampMillis, context, outputDestination = null, "CameraCaptureFailure", outcome.message, outcome.cause)
+                CaptureResult(CaptureOutcome.Failure(outcome.message), trigger, timestampMillis, context.attemptId)
+            }
+        }
     }
 
     /**
@@ -169,6 +220,7 @@ class CaptureCoordinator @Inject constructor(
         burstIntervalMillis: Long,
         captureAspectRatio: CaptureAspectRatio,
         attemptId: CaptureAttemptId,
+        encryptSaves: Boolean,
     ) {
         _state.value = CaptureState.BurstStarted(trigger, attemptId)
         yield() // see the yield() below for why this is here
@@ -196,7 +248,7 @@ class CaptureCoordinator @Inject constructor(
             yield()
         }
         val results = captures.map { capture ->
-            persistBurstCapture(trigger, burstIntervalMillis, captureAspectRatio, attemptId, capture)
+            persistBurstCapture(trigger, burstIntervalMillis, captureAspectRatio, attemptId, capture, encryptSaves)
         }
         diagnosticsLogger.logEvent(
             CaptureDiagnosticEvent.Completed(
@@ -206,6 +258,56 @@ class CaptureCoordinator @Inject constructor(
             ),
         )
         _state.value = CaptureState.BurstCompleted(results, trigger)
+    }
+
+    /**
+     * Starts recording, then suspends on [ActiveVideo.stopSignal] until some later
+     * [requestCapture] call (any trigger, any configured [CaptureMode] - see the busy-branch in
+     * [requestCapture]) completes it, which is what "any trigger stops it" means in practice:
+     * [mutex] stays held by this call for the recording's entire duration, so every other trigger
+     * necessarily fails [Mutex.tryLock] and lands in that branch instead of starting its own
+     * capture.
+     *
+     * [CaptureState.VideoRecording] is deliberately emitted only *after* a successful
+     * [VideoCaptureController.startRecording] call, not before it - unlike [performBurst]'s
+     * unconditional [CaptureState.BurstStarted]. This is what lets the haptics collector in
+     * [com.example.capture.camera.ui.CameraViewModel] tell "recording genuinely started, then
+     * stopped" (single pulse, then double pulse) apart from "never managed to start" (no pulse at
+     * all, same as a failed Single-Shot capture) - both paths end in
+     * [CaptureState.VideoCompleted], but only the former passed through [CaptureState.VideoRecording]
+     * first.
+     */
+    private suspend fun performVideo(trigger: CaptureTrigger, timestampMillis: Long, attemptId: CaptureAttemptId) {
+        val context = CaptureContext(CaptureMode.VIDEO, burstImageNumber = null, burstIntervalMillis = null, CaptureAspectRatio.RATIO_4_3, attemptId)
+        when (val startOutcome = videoCaptureController.startRecording(timestampMillis, attemptId)) {
+            is VideoStartOutcome.Failure -> {
+                logError(timestampMillis, context, outputDestination = null, "VideoStartFailure", startOutcome.message, startOutcome.cause)
+                diagnosticsLogger.logEvent(CaptureDiagnosticEvent.Completed(attemptId, timeProvider.currentTimeMillis(), success = false))
+                _state.value = CaptureState.VideoCompleted(
+                    CaptureResult(CaptureOutcome.Failure(GENERIC_VIDEO_ERROR), trigger, timestampMillis, attemptId),
+                    trigger,
+                )
+                return
+            }
+            VideoStartOutcome.Started -> Unit
+        }
+        _state.value = CaptureState.VideoRecording(trigger, attemptId)
+        yield() // see performBurst's yield() for why this matters to StateFlow collectors
+        val stopSignal = CompletableDeferred<Unit>()
+        activeVideo = ActiveVideo(attemptId, stopSignal)
+        stopSignal.await()
+        activeVideo = null
+        val result = when (val stopOutcome = videoCaptureController.stopRecording()) {
+            is VideoStopOutcome.Success -> CaptureResult(CaptureOutcome.Success(stopOutcome.uriString), trigger, timestampMillis, attemptId)
+            is VideoStopOutcome.Failure -> {
+                logError(timestampMillis, context, outputDestination = null, "VideoStopFailure", stopOutcome.message, stopOutcome.cause)
+                CaptureResult(CaptureOutcome.Failure(GENERIC_VIDEO_ERROR), trigger, timestampMillis, attemptId)
+            }
+        }
+        diagnosticsLogger.logEvent(
+            CaptureDiagnosticEvent.Completed(attemptId, timeProvider.currentTimeMillis(), result.outcome is CaptureOutcome.Success),
+        )
+        _state.value = CaptureState.VideoCompleted(result, trigger)
     }
 
     /** One burst image's in-memory capture result, awaiting phase 2's MediaStore persistence. */
@@ -221,6 +323,7 @@ class CaptureCoordinator @Inject constructor(
         captureAspectRatio: CaptureAspectRatio,
         attemptId: CaptureAttemptId,
         capture: BurstCapture,
+        encryptSaves: Boolean,
     ): CaptureResult {
         val context = CaptureContext(CaptureMode.BURST, capture.imageNumber, burstIntervalMillis, captureAspectRatio, attemptId)
         return when (val outcome = capture.outcome) {
@@ -229,11 +332,23 @@ class CaptureCoordinator @Inject constructor(
                 CaptureResult(CaptureOutcome.Failure(outcome.message), trigger, capture.timestampMillis, attemptId)
             }
             is CameraCaptureMemoryOutcome.Success ->
-                persistCapturedBytes(outcome.jpegBytes, trigger, capture.timestampMillis, context)
+                persistCapturedBytes(outcome.jpegBytes, trigger, capture.timestampMillis, context, encryptSaves)
         }
     }
 
     private suspend fun persistCapturedBytes(
+        jpegBytes: ByteArray,
+        trigger: CaptureTrigger,
+        timestampMillis: Long,
+        context: CaptureContext,
+        encryptSaves: Boolean,
+    ): CaptureResult = if (encryptSaves) {
+        persistEncryptedBytes(jpegBytes, trigger, timestampMillis, context)
+    } else {
+        persistPlaintextBytes(jpegBytes, trigger, timestampMillis, context)
+    }
+
+    private suspend fun persistPlaintextBytes(
         jpegBytes: ByteArray,
         trigger: CaptureTrigger,
         timestampMillis: Long,
@@ -256,6 +371,29 @@ class CaptureCoordinator @Inject constructor(
             logMetadata(context, successOutcome.uriString, timestampMillis)
         }
         return result
+    }
+
+    /**
+     * No [logMetadata] here (unlike [persistPlaintextBytes]): reading back EXIF/dimensions needs
+     * a real image `Uri` [ImageMetadataReader] can decode - meaningless against `.kenc`
+     * ciphertext, so it's skipped rather than attempted and silently failing every time.
+     */
+    private suspend fun persistEncryptedBytes(
+        jpegBytes: ByteArray,
+        trigger: CaptureTrigger,
+        timestampMillis: Long,
+        context: CaptureContext,
+    ): CaptureResult {
+        val uriString = try {
+            encryptedPhotoStorage.writeEncryptedPhoto(jpegBytes, timestampMillis)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Exception) {
+            logError(timestampMillis, context, outputDestination = null, "EncryptedStorageWriteFailure", GENERIC_STORAGE_ERROR, error)
+            return CaptureResult(CaptureOutcome.Failure(GENERIC_STORAGE_ERROR), trigger, timestampMillis, context.attemptId)
+        }
+        diagnosticsLogger.logEvent(CaptureDiagnosticEvent.ImageSaved(context.attemptId, timeProvider.currentTimeMillis(), uriString))
+        return CaptureResult(CaptureOutcome.Success(uriString), trigger, timestampMillis, context.attemptId)
     }
 
     private suspend fun performCapture(
@@ -375,5 +513,6 @@ class CaptureCoordinator @Inject constructor(
     companion object {
         private const val MIN_INTERVAL_MILLIS = 1_500L
         private const val GENERIC_STORAGE_ERROR = "Couldn't save the photo. Please try again."
+        private const val GENERIC_VIDEO_ERROR = "Couldn't save the video. Please try again."
     }
 }

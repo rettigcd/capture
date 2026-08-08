@@ -54,6 +54,24 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+            Exporting the encryption key backup file (internal storage, KeyPair.kkey) via the
+            system share sheet needs a content:// Uri - a raw file:// Uri can't be shared to
+            another app on modern Android. FileProvider is the standard, permission-scoped way to
+            mint one for a file this app already owns; see res/xml/file_paths.xml for the exact
+            path it's allowed to expose (files-dir only) and security/data/KeyFileSharing.kt for
+            the Intent this backs.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

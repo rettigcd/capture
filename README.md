@@ -213,6 +213,7 @@ verification"), rather than only guessing at current versions:
 | DataStore Preferences | 1.2.1 | Latest stable; backs `DataStoreSettingsRepository`. |
 | Coil (`coil-compose`) | 3.5.0 | Latest stable. Coil 3's package is `coil3.compose`, not `coil.compose` (Coil 2's) - loads the overlay image and the settings-screen thumbnail from a `content://`/`file://` URI; no extra network module needed since both are local URIs. |
 | AndroidX ExifInterface | 1.3.7 | Latest stable; reads the EXIF orientation of a just-saved photo for the diagnostic metadata log (see "Capture aspect ratio and preview framing") - `BitmapFactory` alone gives dimensions but not orientation. |
+| AndroidX Lifecycle Process | matches the `lifecycle` line | `ProcessLifecycleOwner` (app-wide foreground/background observation, used by the encryption feature's auto-lock) lives in this separate `androidx.lifecycle:lifecycle-process` artifact, not `lifecycle-runtime-ktx` - easy to miss since the class is under the same `androidx.lifecycle` package. |
 | `compileSdk`/`targetSdk` | 37 | The newer AndroidX releases above (`core-ktx` 1.19.0, `lifecycle` 2.11.0, `hilt-navigation-compose` 1.4.0) require compiling against API 37+; `compileSdk = 36` fails `checkDebugAarMetadata` with these versions. |
 | Java toolchain | 21 | See `app/build.gradle.kts`'s `kotlin { jvmToolchain(21) }` comment - verified end-to-end against a real JDK 21. |
 
@@ -393,13 +394,15 @@ decodable) or the capture itself failed, nothing is logged - this is diagnostic-
 
 ## Capture Mode and Burst Mode
 
-The camera screen supports two capture modes, chosen on the settings screen (see "Settings"
-below) and persisted the same way as the other settings:
+The camera screen supports three capture modes, chosen independently per trigger on the settings
+screen (see "Settings" below) and persisted the same way as the other settings:
 
 * **Single-Shot Mode** (default) - each capture command takes one photo, exactly as described
   above.
 * **Burst Mode** - each capture command takes `BURST_IMAGE_COUNT` (4) photos in quick succession,
   spaced by a configurable target interval.
+* **Video Mode** - each capture command starts a video recording; any subsequent trigger stops it
+  (see "Video Mode" below).
 
 Both modes share the exact same `CaptureCoordinator.requestCapture` entry point and the same
 per-image capture/storage logic (`performCapture`); Burst Mode just calls it four times in a row
@@ -439,6 +442,46 @@ There's no user-facing control that turns either on yet, but `camera/domain/Flas
 merely assumed. `CameraViewModel` collects `captureMode == BURST || overlayVisible` and calls
 `disableFlashAndTorch()` every time that becomes `true`, regardless of whatever state flash/torch
 were previously in.
+
+## Video Mode
+
+A trigger configured for Video Mode starts a recording through `CaptureCoordinator.performVideo`,
+the same central `requestCapture` entry point every other trigger uses. `VideoCaptureController`
+(implemented by `CameraXVideoCaptureController`, the only place `androidx.camera.video.*` is
+touched) wraps CameraX's `Recorder`/`PendingRecording`/`Recording` into two suspend functions,
+`startRecording`/`stopRecording`; there's no separate storage interface the way photos have
+`PhotoStorage` - `Recorder.prepareRecording`'s `MediaStoreOutputOptions` (targeting
+`Movies/Capture`) handles the pending/finalize MediaStore row lifecycle internally.
+
+**Any trigger stops an active recording, regardless of that trigger's own configured mode.**
+`CaptureCoordinator` holds its `Mutex` for a video recording's entire duration (suspended on a
+`CompletableDeferred<Unit>` stop signal), so every other trigger necessarily fails
+`Mutex.tryLock()`; the busy-branch that would normally log a plain rejection instead checks a new
+`activeVideo: ActiveVideo?` field and, if set, completes that signal instead - turning the arriving
+request into a stop rather than a rejection or a second capture. `CameraViewModel` needed a matching
+`videoInProgress` guard around its own capture-mode pipeline-rebind logic
+(`ensureCaptureModeBound`): without it, a stopping trigger configured for a different mode would
+rebind the camera pipeline - tearing down the very `VideoCapture` use case mid-recording - before
+the coordinator ever saw the request.
+
+Unlike `ImageCapture`, the `VideoCapture` use case (`CameraPreview.kt`, via
+`Recorder.Builder().setQualitySelector(...)` + `VideoCapture.withOutput(recorder)`) is bound
+unconditionally alongside `Preview`/`ImageCapture` rather than participating in the per-mode
+dynamic rebind described above - it needs no Burst-style latency/resolution treatment, so there's
+nothing to reconfigure per mode.
+
+**Haptics: one pulse on start, two on stop.** Both are wired through the same collector as Burst
+Mode's start vibration (`CameraViewModel`, `HapticFeedback.performCaptureSuccess`/
+`performVideoStopped`, the latter using `VibrationEffect.createWaveform` for a genuine two-pulse
+pattern). `CaptureState.VideoRecording` is emitted only *after* a confirmed
+`VideoStartOutcome.Started` (not optimistically, the way `BurstStarted` fires on acceptance) so an
+immediate start failure produces no vibration at all, the same as any other failed capture; the
+haptics collector additionally tracks a local `recordingStarted` boolean so a `VideoCompleted` that
+never passed through `VideoRecording` doesn't trigger the "stopped" double-pulse either.
+
+The progress indicator reuses Single-Shot Mode's indeterminate spinner rather than a third visual
+style (`CameraViewModel.toCaptureProgressUi`): visible for `CaptureState.VideoRecording`, hidden for
+`CaptureState.VideoCompleted`.
 
 ## Error Handling
 
@@ -545,8 +588,9 @@ restarts):
 2. **Overlay image selection** - a "Choose image" button that launches the system Photo Picker
    (`ActivityResultContracts.PickVisualMedia`, hosted in `settings/ui/SettingsRoute.kt`). Like the
    camera permission model, this needs no runtime storage/media permission at all.
-3. **Capture mode** - a `SingleChoiceSegmentedButtonRow` choosing between Single-Shot and Burst
-   (see "Capture Mode and Burst Mode" above).
+3. **Capture mode, per trigger** - six independent `SingleChoiceSegmentedButtonRow` controls, one
+   per capture trigger, each choosing between Single-Shot, Burst, and Video (see "Capture Mode and
+   Burst Mode" and "Video Mode" above).
 4. **Burst interval** - a `Slider` snapped to 250 ms increments from 250 ms to 2 s
    (`AppSettings.BURST_INTERVAL_RANGE_MILLIS`), defaulting to 500 ms.
 5. **Capture aspect ratio** - a `SingleChoiceSegmentedButtonRow` choosing between 4:3 (default)
@@ -1265,3 +1309,104 @@ available in this environment (a physical device was connected and used for manu
 smoke testing instead, which is not the same as running the instrumented test suite), which is
 expected and by design: that command always requires a connected device or emulator, camera
 hardware included.
+
+Video Mode was added next: a third per-trigger `CaptureMode` alongside Single-Shot and Burst,
+recording video (with audio, when microphone permission is granted) to `Movies/Capture` via
+CameraX's `camera-video` artifact (`Recorder`/`VideoCapture`/`MediaStoreOutputOptions` - not
+previously a dependency; the exact API shapes for `PendingRecording`, `Recording`,
+`VideoRecordEvent.Finalize`, `QualitySelector`, and `FallbackStrategy` were confirmed via `javap`
+against the cached AAR before writing any code against them, the same approach used earlier in this
+log for `ImageProxy` and `AwaitPointerEventScope.size`). Unlike Single-Shot/Burst's `ImageCapture`
+use case, the new `VideoCapture` use case is bound unconditionally alongside `Preview`/`ImageCapture`
+in `CameraPreview.kt` rather than participating in the per-mode dynamic rebind - it needs no
+Burst-style latency/resolution treatment, so there's nothing to reconfigure per mode. Per the
+product requirement ("any trigger stops an active recording, not just the one that started it"),
+`CaptureCoordinator.requestCapture`'s existing busy-branch (`Mutex.tryLock()` failing because a
+capture is already in flight) was extended: if the in-flight capture is a video recording
+(tracked via a new `activeVideo: ActiveVideo?` holding a `CompletableDeferred<Unit>` stop signal),
+the arriving request completes that signal instead of being logged as a plain rejection - regardless
+of the arriving trigger's own configured mode. `CameraViewModel` needed a matching guard
+(`videoInProgress`) around its own pipeline-rebind logic: without it, a stopping trigger configured
+for a different mode would rebind the camera pipeline - tearing down the very `VideoCapture` use
+case mid-recording - before the coordinator ever saw the request.
+
+The sandbox test suite caught a real design bug before it reached a device: the double haptic pulse
+on stop (vs. the single pulse on start, both wired through `CameraViewModel`'s existing burst-haptics
+collector) fired even when a recording never actually started, because `CaptureState.VideoRecording`
+was originally emitted optimistically, before the CameraX start call was even attempted - mirroring
+`BurstStarted`'s "fire on acceptance" semantics. For video's near-instant start call that's a
+meaningless distinction most of the time, but a failed start produced an odd double-buzz with nothing
+that had actually recorded. Fixed by moving the `VideoRecording` emission to *after* a confirmed
+`VideoStartOutcome.Started`, and by tracking a `recordingStarted` boolean local to the haptics
+collector so a `VideoCompleted` that never passed through `VideoRecording` (an immediate start
+failure) triggers no vibration at all, the same as any other failed capture. `testDebugUnitTest`
+(139/139 tests, including 13 new cases spanning the coordinator's start/stop/any-trigger-stops
+dispatch, the ViewModel's spinner/haptics/pipeline-rebind-guard behavior, and the Settings screen's
+new three-option segmented row), `lintDebug` (0 issues), and `assembleDebug` all passed. Device
+verification of the actual recording (CameraX `Recorder` behavior, real audio permission handling,
+`Movies/Capture` output) was not performed as part of this change - unlike the CameraX use-case
+classes themselves, none of this project's plain-JVM/Robolectric tests can construct a real
+`Recorder`, so - consistent with how `CameraPreview.kt`'s CameraX binding code has never had unit
+coverage of its own - that mechanic still needs a real-device smoke test before being considered
+fully verified.
+
+The `.kkey`/`.kenc` key-management and photo-encryption library was ported next from the sibling
+`keibler` Android app into a new `security` feature package (domain/data/ui, a `SecurityModule`
+Hilt binding, an `EncryptionKeyScreen` reached from a new Settings row, and a `FileProvider` for
+key export) - see `encryption_setup.md`. The sandboxed test run caught a real cross-provider
+portability bug, not just a typo: the ported crypto relied on casting a `KeyFactory`-reconstructed
+RSA private key to `RSAPrivateCrtKey` to re-derive its public exponent, which works on a plain
+OpenJDK provider but throws `ClassCastException` under Conscrypt (Android's default JCE provider,
+also what Robolectric uses) - Conscrypt simply doesn't retain CRT parameters across a PKCS8
+encode/decode round trip, even though the source app's own tests (run only on a plain JVM) never
+surfaced it. Unfixed, this would have broken sign-in, key import, and passphrase-change on a real
+device. Fixed by never deriving the public key from a reconstructed private key at all:
+`FileKeyBackupRepository` now carries the public key material independently (it's already stored
+separately in both the `.kkey` file and `EncryptionKeyPair`/`ImportedKeyPair`), and validates a
+decrypted private key against its file's stored public key via a functional RSA-OAEP encrypt/decrypt
+round trip instead of comparing derived DER bytes; `KencPhotoEncryptor.setPrivateKey` does the same
+functional check against its already-set public key rather than casting the candidate. A separate,
+unrelated miss was also caught: `ProcessLifecycleOwner` (used for the encryption session's
+auto-lock-on-background) lives in the `androidx.lifecycle:lifecycle-process` artifact, not
+`lifecycle-runtime-ktx`, and had to be added as an explicit dependency. A Compose UI test also
+needed a fix, not the production code: `onNodeWithText("Unlock")` matched both the sign-in dialog's
+title and its confirm button (both happen to be the same string), disambiguated by matching on
+`hasClickAction()` too. `testDebugUnitTest` (190/190 tests, including 51 new cases spanning the
+`.kkey`/`.kenc` byte formats, the RSA-OAEP+AES-GCM photo-encryption round trip, the
+sign-in/lock/inactivity-timer state machine, and the new screen), `lintDebug` (0 issues), and
+`assembleDebug` all passed. Wiring `PhotoEncryptor` into actual photo capture remains out of scope,
+per `encryption_setup.md`; device verification of the new screen (sign-in, create/import/export
+key, change passphrase) has not been performed.
+
+`PhotoEncryptor` was then wired into actual photo capture: a new "Encrypt saved photos" toggle (top
+of the Settings screen) saves Single-Shot and Burst captures as genuine `.kenc` files - full
+magic-header/image-block/metadata-block format, cross-app compatible with the .NET/MAUI and keibler
+apps, via a new `PhotoEncryptor.encryptToKencFile` - into a user-picked folder (Storage Access
+Framework, `ACTION_OPEN_DOCUMENT_TREE`/`DocumentsContract`, not `MediaStore` or app-private storage,
+so a separate encrypted-image-viewer app can open the folder directly). Video Mode is untouched -
+its `Recorder`-based pipeline has no in-memory-bytes step to intercept the way Single-Shot/Burst do.
+Single-Shot itself needed real restructuring for this: unlike Burst (which already captures to
+memory first, for cadence reasons unrelated to encryption), plaintext Single-Shot writes straight
+into a reserved `MediaStore` entry's `OutputStream` and never produces in-memory bytes at all -
+encrypting it required rerouting through the same `captureToMemory` path Burst already uses, only
+when the toggle is on; the plaintext/off path is untouched. Two real, non-typo issues turned up
+during this pass:
+- `KeySessionRepository.initialize()` previously only ran when `EncryptionKeyScreen` was first
+  opened, so the new toggle's "disabled until a key file exists" state would have been wrong for an
+  entire session if a user with a real key file never visited that screen - fixed by also calling
+  `initialize()` from `CaptureApplication.onCreate()` (idempotent, so `KeySessionViewModel`'s own
+  later call is a harmless re-check).
+- Adding the new toggle as the *first* control on the Settings screen pushed every other control
+  down; two existing Compose UI tests (`noImageSelectedMessage_isShown_whenNoImageHasBeenPicked`,
+  `clickingChooseImage_invokesCallback`) started failing because their target nodes were no longer
+  within the initial scrolled viewport - fixed by adding the `performScrollTo()` this file's other
+  tests already use for below-the-fold controls, not a production bug.
+
+`testDebugUnitTest` (207/207 tests, 17 new - `encryptToKencFile`'s round trip, `CaptureCoordinator`'s
+new encrypted Single-Shot/Burst paths and their `EncryptedPhotoStorage`-failure handling, the
+settings toggle's folder-picker-launch/persist/reactive-clear state machine, and the new Settings UI
+row), `lintDebug` (0 issues), and `assembleDebug` all passed. `SafEncryptedPhotoStorage` itself
+(`DocumentsContract`/SAF calls) is not unit-testable the way the rest of this pass is - consistent
+with `CameraPreview.kt`'s CameraX binding code never having unit coverage of its own - so it still
+needs a real-device smoke test (pick a folder, capture with the toggle on, confirm a real `.kenc`
+file lands there) before this feature is considered fully verified.

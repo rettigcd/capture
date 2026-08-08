@@ -2,10 +2,13 @@ package com.example.capture.camera.ui
 
 import androidx.camera.core.Camera
 import androidx.camera.core.ImageCapture
+import androidx.camera.video.Recorder
+import androidx.camera.video.VideoCapture
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.capture.camera.data.CameraControlHolder
 import com.example.capture.camera.data.ImageCaptureUseCaseHolder
+import com.example.capture.camera.data.VideoCaptureUseCaseHolder
 import com.example.capture.camera.domain.BURST_IMAGE_COUNT
 import com.example.capture.camera.domain.CameraDiagnosticsSnapshot
 import com.example.capture.camera.domain.CaptureAspectRatio
@@ -56,6 +59,7 @@ class CameraViewModel @Inject constructor(
     private val captureCoordinator: CaptureCoordinator,
     private val voiceCommandRecognizer: VoiceCommandRecognizer,
     private val imageCaptureUseCaseHolder: ImageCaptureUseCaseHolder,
+    private val videoCaptureUseCaseHolder: VideoCaptureUseCaseHolder,
     private val cameraControlHolder: CameraControlHolder,
     private val hapticFeedback: HapticFeedback,
     private val settingsRepository: SettingsRepository,
@@ -103,6 +107,18 @@ class CameraViewModel @Inject constructor(
     @Volatile
     private var burstInProgress = false
 
+    /**
+     * True for the whole duration of an in-progress Video Mode recording. While true,
+     * [requestCapture] skips [ensureCaptureModeBound] entirely: rebinding the camera pipeline
+     * would tear down/rebuild the very `VideoCapture` use case the active recording is writing
+     * to, corrupting it. This is safe because [CaptureCoordinator] treats *any* trigger that
+     * arrives during a recording as a stop request regardless of that trigger's own configured
+     * mode (see "Video Mode" in app-spec.md: "any trigger stops it"), so which mode would
+     * otherwise have been bound is moot until the recording actually stops.
+     */
+    @Volatile
+    private var videoInProgress = false
+
     // Debug-only state (see "Debug Overlay" in app-spec.md): kept separate from uiState/
     // CameraUiState so this diagnostics-only concern can't affect the screen's main render path or
     // its tests. The toggle button that flips diagnosticsOverlayEnabled is itself only rendered in
@@ -145,22 +161,32 @@ class CameraViewModel @Inject constructor(
                 }
             }
         }
-        // Fires once per completed Single-Shot capture, and once per *triggered* burst (not once
-        // per image in it - see CaptureState.BurstStarted's kdoc and "Burst Feedback" in
-        // app-spec.md) - a dedicated collector rather than deriving it inside the `uiState`
-        // combine above, since that combine re-runs on every unrelated upstream emission (e.g. a
+        // Fires once per completed Single-Shot capture, once per *triggered* burst (not once per
+        // image in it - see CaptureState.BurstStarted's kdoc and "Burst Feedback" in
+        // app-spec.md), and once each when a Video Mode recording starts/stops (see "Video Mode"
+        // in app-spec.md: same single pulse as Burst Mode's start, a distinct double pulse on
+        // stop) - a dedicated collector rather than deriving it inside the `uiState` combine
+        // above, since that combine re-runs on every unrelated upstream emission (e.g. a
         // voice-state change) and would otherwise repeat the pulse for as long as the raw
         // CaptureState stays in a completed state.
+        //
+        // recordingStarted is local to this collector (not the class-level videoInProgress, which
+        // a *different* collector below owns) - it's what tells a VideoCompleted that followed a
+        // real CaptureState.VideoRecording (double-pulse: it was actually recording, now it
+        // stopped) apart from one that didn't (an immediate start failure - see performVideo's
+        // kdoc): no pulse at all, the same as any other failed capture.
         viewModelScope.launch {
+            var recordingStarted = false
             captureCoordinator.state.collect { state ->
-                val shouldVibrate = when (state) {
-                    is CaptureState.BurstStarted -> true
-                    is CaptureState.Completed -> state.result.outcome is CaptureOutcome.Success
-                    else -> false
-                }
-                if (shouldVibrate) {
+                val singlePulse = state is CaptureState.BurstStarted ||
+                    state is CaptureState.VideoRecording ||
+                    (state is CaptureState.Completed && state.result.outcome is CaptureOutcome.Success)
+                if (state is CaptureState.VideoRecording) recordingStarted = true
+                val doublePulse = state is CaptureState.VideoCompleted && recordingStarted
+                if (state is CaptureState.VideoCompleted) recordingStarted = false
+                if (singlePulse || doublePulse) {
                     val durationMillis = settingsRepository.settings.first().vibrationDurationMillis
-                    hapticFeedback.performCaptureSuccess(durationMillis)
+                    if (singlePulse) hapticFeedback.performCaptureSuccess(durationMillis) else hapticFeedback.performVideoStopped(durationMillis)
                 }
             }
         }
@@ -197,6 +223,8 @@ class CameraViewModel @Inject constructor(
                         burstInProgress = false
                         effectiveCaptureAspectRatio.value = settingsRepository.settings.first().captureAspectRatio
                     }
+                    is CaptureState.VideoRecording -> videoInProgress = true
+                    is CaptureState.VideoCompleted -> videoInProgress = false
                     else -> {}
                 }
             }
@@ -228,6 +256,16 @@ class CameraViewModel @Inject constructor(
                         it.copy(captureState = if (state.result.outcome is CaptureOutcome.Success) "Completed:Success" else "Completed:Failure")
                     }
                     is CaptureState.BurstCompleted -> _diagnosticsOverlayInfo.update { it.copy(captureState = "BurstCompleted") }
+                    is CaptureState.VideoRecording -> _diagnosticsOverlayInfo.update {
+                        it.copy(
+                            captureState = "VideoRecording",
+                            lastCaptureAttemptId = state.attemptId,
+                            lastCaptureTriggerSource = state.trigger.toDiagnosticSource(),
+                        )
+                    }
+                    is CaptureState.VideoCompleted -> _diagnosticsOverlayInfo.update {
+                        it.copy(captureState = if (state.result.outcome is CaptureOutcome.Success) "VideoCompleted:Success" else "VideoCompleted:Failure")
+                    }
                     CaptureState.Idle -> {}
                 }
             }
@@ -249,6 +287,12 @@ class CameraViewModel @Inject constructor(
      * only place [ImageCaptureUseCaseHolder] is touched from the UI layer.
      */
     fun attachImageCapture(useCase: ImageCapture?) = imageCaptureUseCaseHolder.attach(useCase)
+
+    /**
+     * Wired up as the `onVideoCaptureReady` callback for `CameraPreview`; keeps this being the
+     * only place [VideoCaptureUseCaseHolder] is touched from the UI layer.
+     */
+    fun attachVideoCapture(useCase: VideoCapture<Recorder>?) = videoCaptureUseCaseHolder.attach(useCase)
 
     /**
      * Wired up as the `onCameraReady` callback for `CameraPreview`; keeps this being the only
@@ -283,12 +327,17 @@ class CameraViewModel @Inject constructor(
         viewModelScope.launch {
             val settings = settingsRepository.settings.first()
             val requiredMode = settings.captureModeByTrigger[trigger.kind()] ?: CaptureMode.SINGLE_SHOT
-            ensureCaptureModeBound(requiredMode)
+            // While a video recording is in progress, every trigger is actually a stop request
+            // (see videoInProgress's kdoc) - the pipeline must stay bound exactly as it is until
+            // the recording finishes, whatever requiredMode this particular trigger is configured
+            // for.
+            if (!videoInProgress) ensureCaptureModeBound(requiredMode)
             captureCoordinator.requestCapture(
                 trigger,
                 requiredMode,
                 settings.burstIntervalMillis,
                 settings.captureAspectRatio,
+                settings.encryptSavedPhotos,
             )
         }
     }
@@ -386,15 +435,17 @@ private data class CaptureVoicePermissionState(
 
 /**
  * Drives [CaptureProgressIndicator]: an indeterminate spinner for the whole of Single-Shot Mode's
- * capture, a determinate one that starts at 0 of [BURST_IMAGE_COUNT] the instant a burst is
- * accepted and advances by one step per [CaptureState.BurstProgress] emission, and hidden the rest
- * of the time (see "Capture Progress Indicator" in app-spec.md).
+ * capture and (see "Video Mode" in app-spec.md) the whole of a Video Mode recording, a
+ * determinate one that starts at 0 of [BURST_IMAGE_COUNT] the instant a burst is accepted and
+ * advances by one step per [CaptureState.BurstProgress] emission, and hidden the rest of the time
+ * (see "Capture Progress Indicator" in app-spec.md).
  */
 private fun CaptureState.toCaptureProgressUi(): CaptureProgressUi = when (this) {
     is CaptureState.Capturing -> CaptureProgressUi.Indeterminate
+    is CaptureState.VideoRecording -> CaptureProgressUi.Indeterminate
     is CaptureState.BurstStarted -> CaptureProgressUi.Determinate(0, BURST_IMAGE_COUNT)
     is CaptureState.BurstProgress -> CaptureProgressUi.Determinate(imagesCompleted, BURST_IMAGE_COUNT)
-    CaptureState.Idle, is CaptureState.Completed, is CaptureState.BurstCompleted -> CaptureProgressUi.Hidden
+    CaptureState.Idle, is CaptureState.Completed, is CaptureState.BurstCompleted, is CaptureState.VideoCompleted -> CaptureProgressUi.Hidden
 }
 
 /**

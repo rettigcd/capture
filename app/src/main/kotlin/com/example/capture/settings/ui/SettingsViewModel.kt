@@ -7,28 +7,53 @@ import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.camera.domain.CaptureTriggerKind
 import com.example.capture.common.ApplicationScope
+import com.example.capture.security.domain.KeySessionRepository
 import com.example.capture.settings.domain.AppSettings
 import com.example.capture.settings.domain.OverlayImageStore
 import com.example.capture.settings.domain.SettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import javax.inject.Inject
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val overlayImageStore: OverlayImageStore,
+    private val keySessionRepository: KeySessionRepository,
     @ApplicationScope private val applicationScope: CoroutineScope,
 ) : ViewModel() {
 
-    val uiState: StateFlow<SettingsUiState> = settingsRepository.settings
-        .map { it.toUiState() }
+    val uiState: StateFlow<SettingsUiState> = combine(
+        settingsRepository.settings,
+        keySessionRepository.state,
+    ) { settings, sessionState -> settings.toUiState(hasKeyFile = sessionState.hasKeyFile) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), SettingsUiState())
+
+    private val _events = MutableSharedFlow<SettingsEvent>()
+    val events: SharedFlow<SettingsEvent> = _events.asSharedFlow()
+
+    init {
+        // If the key file the "Encrypt saved photos" preference depends on ever goes missing
+        // (deleted, replaced), that preference is cleared rather than left silently on pointing
+        // at a key that no longer exists (see AppSettings.encryptSavedPhotos's kdoc).
+        viewModelScope.launch {
+            combine(settingsRepository.settings, keySessionRepository.state) { settings, sessionState -> settings to sessionState }
+                .collect { (settings, sessionState) ->
+                    if (settings.encryptSavedPhotos && !sessionState.hasKeyFile) {
+                        applicationScope.launch { settingsRepository.setEncryptSavedPhotos(false) }
+                    }
+                }
+        }
+    }
 
     // These writes use applicationScope, not viewModelScope: this screen is popped off the
     // Navigation Compose back stack (which cancels viewModelScope) as soon as the user navigates
@@ -78,17 +103,55 @@ class SettingsViewModel @Inject constructor(
         applicationScope.launch { settingsRepository.setDiagnosticsFileLoggingEnabled(enabled) }
     }
 
+    /**
+     * Turning on with no folder yet picked launches the folder picker instead of persisting
+     * `true` directly - [onEncryptedPhotosFolderPicked] is what actually turns encryption on,
+     * once a folder is confirmed. Turning on with a folder already picked (re-enabling) does not
+     * re-prompt. Turning off just persists `false`, leaving the remembered folder alone so
+     * turning back on later doesn't require re-picking.
+     */
+    fun onEncryptSavedPhotosToggled(enabled: Boolean) {
+        applicationScope.launch {
+            if (!enabled) {
+                settingsRepository.setEncryptSavedPhotos(false)
+                return@launch
+            }
+            val hasFolder = settingsRepository.settings.first().encryptedPhotosFolderUriString != null
+            if (hasFolder) {
+                settingsRepository.setEncryptSavedPhotos(true)
+            } else {
+                _events.emit(SettingsEvent.LaunchFolderPicker)
+            }
+        }
+    }
+
+    fun onChooseEncryptedPhotosFolderClicked() {
+        viewModelScope.launch { _events.emit(SettingsEvent.LaunchFolderPicker) }
+    }
+
+    /** [uriString] is null if the picker was cancelled, in which case encryption is not turned on. */
+    fun onEncryptedPhotosFolderPicked(uriString: String?) {
+        if (uriString == null) return
+        applicationScope.launch {
+            settingsRepository.setEncryptedPhotosFolderUri(uriString)
+            settingsRepository.setEncryptSavedPhotos(true)
+        }
+    }
+
     private companion object {
         const val STOP_TIMEOUT_MILLIS = 5_000L
         const val TAG = "SettingsViewModel"
     }
 }
 
-private fun AppSettings.toUiState() = SettingsUiState(
+private fun AppSettings.toUiState(hasKeyFile: Boolean) = SettingsUiState(
     vibrationDurationMillis = vibrationDurationMillis,
     overlayImageUriString = overlayImageUriString,
     captureModeByTrigger = captureModeByTrigger,
     burstIntervalMillis = burstIntervalMillis,
     captureAspectRatio = captureAspectRatio,
     diagnosticsFileLoggingEnabled = diagnosticsFileLoggingEnabled,
+    encryptSavedPhotos = encryptSavedPhotos,
+    encryptSavedPhotosAvailable = hasKeyFile,
+    hasEncryptedPhotosFolder = encryptedPhotosFolderUriString != null,
 )

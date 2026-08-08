@@ -19,4 +19,6 @@ interface SettingsRepository {
     suspend fun setBurstIntervalMillis(intervalMillis: Long)
     suspend fun setCaptureAspectRatio(ratio: CaptureAspectRatio)
     suspend fun setDiagnosticsFileLoggingEnabled(enabled: Boolean)
+    suspend fun setEncryptSavedPhotos(enabled: Boolean)
+    suspend fun setEncryptedPhotosFolderUri(uriString: String?)
 }

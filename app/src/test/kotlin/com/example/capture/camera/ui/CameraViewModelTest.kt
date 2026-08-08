@@ -2,6 +2,7 @@ package com.example.capture.camera.ui
 
 import com.example.capture.camera.data.CameraControlHolder
 import com.example.capture.camera.data.ImageCaptureUseCaseHolder
+import com.example.capture.camera.data.VideoCaptureUseCaseHolder
 import com.example.capture.camera.domain.BURST_IMAGE_COUNT
 import com.example.capture.camera.domain.CameraCaptureMemoryOutcome
 import com.example.capture.camera.domain.CameraCaptureOutcome
@@ -12,6 +13,7 @@ import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.camera.domain.CaptureTriggerKind
 import com.example.capture.camera.domain.CaptureTriggerSource
 import com.example.capture.camera.domain.GestureDiagnosticEvent
+import com.example.capture.camera.domain.VideoStartOutcome
 import com.example.capture.permissions.PermissionStatus
 import com.example.capture.settings.domain.AppSettings
 import com.example.capture.testing.FakeCameraCaptureController
@@ -19,6 +21,7 @@ import com.example.capture.testing.FakeCaptureAttemptIdGenerator
 import com.example.capture.testing.FakeCaptureDiagnosticsLogger
 import com.example.capture.testing.FakeCaptureErrorLogger
 import com.example.capture.testing.FakeCaptureMetadataLogger
+import com.example.capture.testing.FakeEncryptedPhotoStorage
 import com.example.capture.testing.FakeFlashTorchController
 import com.example.capture.testing.FakeGestureDiagnosticsLogger
 import com.example.capture.testing.FakeHapticFeedback
@@ -27,6 +30,7 @@ import com.example.capture.testing.FakeOverlayVisibilityRepository
 import com.example.capture.testing.FakePhotoStorage
 import com.example.capture.testing.FakeSettingsRepository
 import com.example.capture.testing.FakeTimeProvider
+import com.example.capture.testing.FakeVideoCaptureController
 import com.example.capture.testing.FakeVoiceCommandRecognizer
 import com.example.capture.testing.TestDispatcherProvider
 import com.example.capture.voice.domain.VoiceRecognitionState
@@ -65,8 +69,13 @@ class CameraViewModelTest {
     private fun burstFor(trigger: CaptureTriggerKind): Map<CaptureTriggerKind, CaptureMode> =
         AppSettings().captureModeByTrigger + (trigger to CaptureMode.BURST)
 
+    /** All six triggers default to Single-Shot except [trigger], which is set to Video. */
+    private fun videoFor(trigger: CaptureTriggerKind): Map<CaptureTriggerKind, CaptureMode> =
+        AppSettings().captureModeByTrigger + (trigger to CaptureMode.VIDEO)
+
     private fun buildViewModel(
         camera: FakeCameraCaptureController = FakeCameraCaptureController(),
+        video: FakeVideoCaptureController = FakeVideoCaptureController(),
         storage: FakePhotoStorage = FakePhotoStorage(),
         voice: FakeVoiceCommandRecognizer = FakeVoiceCommandRecognizer(),
         haptics: FakeHapticFeedback = FakeHapticFeedback(),
@@ -84,7 +93,9 @@ class CameraViewModelTest {
         val dispatcher = StandardTestDispatcher(scheduler)
         val coordinator = CaptureCoordinator(
             camera,
+            video,
             storage,
+            FakeEncryptedPhotoStorage(),
             FakeTimeProvider().apply { attachScheduler(scheduler) },
             TestDispatcherProvider(dispatcher),
             errorLogger,
@@ -98,6 +109,7 @@ class CameraViewModelTest {
             coordinator,
             voice,
             ImageCaptureUseCaseHolder(),
+            VideoCaptureUseCaseHolder(),
             CameraControlHolder(),
             haptics,
             settings,
@@ -630,5 +642,103 @@ class CameraViewModelTest {
         assertThat(vm.diagnosticsOverlayEnabled.value).isTrue()
         vm.onDiagnosticsOverlayToggled()
         assertThat(vm.diagnosticsOverlayEnabled.value).isFalse()
+    }
+
+    @Test
+    fun `a trigger configured for video starts recording, shows an indeterminate spinner, and vibrates once`() = runTest {
+        val video = FakeVideoCaptureController()
+        val haptics = FakeHapticFeedback()
+        val settings = FakeSettingsRepository(AppSettings(captureModeByTrigger = videoFor(CaptureTriggerKind.SCREEN_TOP)))
+        val vm = buildViewModel(video = video, haptics = haptics, settings = settings, scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+
+        vm.onScreenTouch(true)
+        advanceUntilIdle()
+
+        assertThat(video.startCount).isEqualTo(1)
+        assertThat(vm.uiState.value.captureProgress).isEqualTo(CaptureProgressUi.Indeterminate)
+        assertThat(haptics.performCaptureSuccessCount).isEqualTo(1)
+        assertThat(haptics.performVideoStoppedCount).isEqualTo(0)
+
+        // Clean up: stop the recording so this test doesn't leave a permanently-suspended job.
+        vm.onVolumeUpPressed()
+        advanceUntilIdle()
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `any trigger stops an active video recording, hides the spinner, and vibrates twice`() = runTest {
+        val video = FakeVideoCaptureController()
+        val haptics = FakeHapticFeedback()
+        val settings = FakeSettingsRepository(AppSettings(captureModeByTrigger = videoFor(CaptureTriggerKind.SCREEN_TOP)))
+        val vm = buildViewModel(video = video, haptics = haptics, settings = settings, scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+
+        vm.onScreenTouch(true)
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.captureProgress).isEqualTo(CaptureProgressUi.Indeterminate)
+
+        // Volume Up is left at its Single-Shot default, but while a recording is active any
+        // trigger stops it instead of starting its own configured capture (see "Video Mode" in
+        // app-spec.md).
+        vm.onVolumeUpPressed()
+        advanceUntilIdle()
+
+        assertThat(video.stopCount).isEqualTo(1)
+        assertThat(vm.uiState.value.captureProgress).isEqualTo(CaptureProgressUi.Hidden)
+        assertThat(haptics.performVideoStoppedCount).isEqualTo(1)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `the stopping trigger's own configured mode is never bound while a recording is active`() = runTest {
+        // If the stopping trigger's mode were bound before the coordinator even saw the request,
+        // it would rebuild/rebind the very VideoCapture use case the active recording is writing
+        // to (see CameraViewModel.videoInProgress's kdoc). uiState.captureMode staying VIDEO
+        // throughout is the observable proof that never happened.
+        val video = FakeVideoCaptureController()
+        val camera = FakeCameraCaptureController()
+        val settings = FakeSettingsRepository(
+            AppSettings(
+                captureModeByTrigger = videoFor(CaptureTriggerKind.SCREEN_TOP) +
+                    (CaptureTriggerKind.VOLUME_UP to CaptureMode.BURST),
+                burstIntervalMillis = 250L,
+            ),
+        )
+        val vm = buildViewModel(camera = camera, video = video, settings = settings, scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+
+        vm.onScreenTouch(true)
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.captureMode).isEqualTo(CaptureMode.VIDEO)
+
+        vm.onVolumeUpPressed()
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.captureMode).isEqualTo(CaptureMode.VIDEO)
+        assertThat(camera.captureCount).isEqualTo(0)
+        assertThat(camera.memoryCaptureCount).isEqualTo(0)
+        assertThat(video.stopCount).isEqualTo(1)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `a video start failure does not vibrate and leaves the progress indicator hidden`() = runTest {
+        val video = FakeVideoCaptureController(startOutcome = VideoStartOutcome.Failure("camera not ready"))
+        val haptics = FakeHapticFeedback()
+        val settings = FakeSettingsRepository(AppSettings(captureModeByTrigger = videoFor(CaptureTriggerKind.SCREEN_TOP)))
+        val vm = buildViewModel(video = video, haptics = haptics, settings = settings, scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+
+        vm.onScreenTouch(true)
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.captureProgress).isEqualTo(CaptureProgressUi.Hidden)
+        assertThat(haptics.performCaptureSuccessCount).isEqualTo(0)
+        assertThat(haptics.performVideoStoppedCount).isEqualTo(0)
+
+        collectJob.cancel()
     }
 }

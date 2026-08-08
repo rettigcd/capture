@@ -27,6 +27,7 @@
     <string name="settings_capture_mode_label">Capture mode</string>
     <string name="settings_capture_mode_single_shot">Single</string>
     <string name="settings_capture_mode_burst">Burst</string>
+    <string name="settings_capture_mode_video">Video</string>
     <string name="settings_capture_mode_trigger_screen_top">Screen - top half</string>
     <string name="settings_capture_mode_trigger_screen_bottom">Screen - bottom half</string>
     <string name="settings_capture_mode_trigger_shutter_button">Shutter button</string>
@@ -39,4 +40,58 @@
     <string name="settings_aspect_ratio_16_9">16:9</string>
     <string name="settings_diagnostics_file_logging_label">Save diagnostic logs to file</string>
     <string name="diagnostics_overlay_toggle_content_description">Toggle diagnostics overlay</string>
+
+    <string name="settings_encryption_key_button">Encryption Key</string>
+    <string name="settings_encrypt_saved_photos_label">Encrypt saved photos</string>
+    <string name="settings_encrypt_saved_photos_unavailable_message">Create or import an encryption key to enable this.</string>
+    <string name="settings_choose_encrypted_photos_folder_button">Choose folder</string>
+    <string name="settings_change_encrypted_photos_folder_button">Change folder</string>
+
+    <string name="encryption_key_title">Encryption Key</string>
+    <string name="encryption_key_create_key">Create Key</string>
+    <string name="encryption_key_import_key">Import Key</string>
+    <string name="encryption_key_export_key">Export Key</string>
+    <string name="encryption_key_change_passphrase">Change Passphrase</string>
+    <string name="encryption_key_sign_in">Sign In</string>
+    <string name="encryption_key_lock">Lock</string>
+
+    <string name="encryption_key_confirm_replace_title_create">Create Encryption Key</string>
+    <string name="encryption_key_confirm_replace_title_import">Import Encryption Key</string>
+    <string name="encryption_key_confirm_replace_message">A key pair already exists. It will be backed up before replacement. Continue?</string>
+    <string name="encryption_key_continue_button">Continue</string>
+    <string name="encryption_key_cancel_button">Cancel</string>
+    <string name="encryption_key_ok_button">OK</string>
+    <string name="encryption_key_next_button">Next</string>
+
+    <string name="encryption_key_unlock_title">Unlock</string>
+    <string name="encryption_key_unlock_prompt_with_fingerprint">SHA256: %1$s…</string>
+    <string name="encryption_key_unlock_prompt_no_fingerprint">Enter passphrase to unlock encryption key</string>
+    <string name="encryption_key_unlock_button">Unlock</string>
+
+    <string name="encryption_key_create_title">Create Encryption Key</string>
+    <string name="encryption_key_create_enter_prompt">Enter passphrase (min 8 characters)</string>
+    <string name="encryption_key_create_confirm_prompt">Confirm passphrase</string>
+    <string name="encryption_key_create_button">Create</string>
+
+    <string name="encryption_key_change_passphrase_title">Change Passphrase</string>
+    <string name="encryption_key_change_current_prompt_with_fingerprint">Enter current passphrase (SHA256: %1$s…)</string>
+    <string name="encryption_key_change_current_prompt_no_fingerprint">Enter current passphrase to unlock encryption key</string>
+    <string name="encryption_key_change_new_prompt">Enter new passphrase (min 8 characters)</string>
+    <string name="encryption_key_change_confirm_prompt">Confirm new passphrase</string>
+    <string name="encryption_key_change_button">Change</string>
+
+    <string name="encryption_key_export_no_key_message">No encryption key to export.</string>
+    <string name="encryption_key_change_requires_sign_in_message">You must sign in before changing the passphrase.</string>
+    <string name="encryption_key_incorrect_passphrase_error">Incorrect passphrase or corrupted key file.</string>
+    <string name="encryption_key_no_key_found_message">No encryption key found. Create or import a key first.</string>
+    <string name="encryption_key_passphrase_min_length_error">Passphrase must be at least %1$d characters.</string>
+    <string name="encryption_key_passphrase_mismatch_error">Passphrases do not match.</string>
+    <string name="encryption_key_create_success_message">Encryption key created and activated.</string>
+    <string name="encryption_key_activation_failed_message">Failed to activate new key.</string>
+    <string name="encryption_key_change_success_message">Passphrase changed.</string>
+    <string name="encryption_key_change_incorrect_current_error">Incorrect current passphrase or corrupted key file.</string>
+    <string name="encryption_key_import_success_message">Key imported. Sign in with your passphrase to view encrypted images.</string>
+    <string name="encryption_key_import_read_failed_message">Could not read the selected file.</string>
+    <string name="encryption_key_may_be_corrupted_message">Key file may be corrupted.</string>
+    <string name="encryption_key_share_chooser_title">Export Encryption Key</string>
 </resources>

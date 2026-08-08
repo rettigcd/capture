@@ -68,6 +68,16 @@ sealed interface CaptureDiagnosticEvent {
         val errorMessage: String,
         val reason: CaptureRejectionReason,
     ) : CaptureDiagnosticEvent
+
+    /**
+     * Logged against the original recording's [attemptId] when any trigger (not necessarily the
+     * one that started the recording) requests that an in-progress Video Mode recording stop -
+     * see "Video Mode" in app-spec.md.
+     */
+    data class VideoStopRequested(
+        override val attemptId: CaptureAttemptId,
+        override val timestampMillis: Long,
+    ) : CaptureDiagnosticEvent
 }
 
 /**

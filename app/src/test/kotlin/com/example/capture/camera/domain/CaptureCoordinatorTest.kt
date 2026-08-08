@@ -6,9 +6,11 @@ import com.example.capture.testing.FakeCaptureAttemptIdGenerator
 import com.example.capture.testing.FakeCaptureDiagnosticsLogger
 import com.example.capture.testing.FakeCaptureErrorLogger
 import com.example.capture.testing.FakeCaptureMetadataLogger
+import com.example.capture.testing.FakeEncryptedPhotoStorage
 import com.example.capture.testing.FakeImageMetadataReader
 import com.example.capture.testing.FakePhotoStorage
 import com.example.capture.testing.FakeTimeProvider
+import com.example.capture.testing.FakeVideoCaptureController
 import com.example.capture.testing.TestDispatcherProvider
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -26,11 +28,13 @@ class CaptureCoordinatorTest {
     private fun buildCoordinator(
         camera: FakeCameraCaptureController = FakeCameraCaptureController(),
         storage: FakePhotoStorage = FakePhotoStorage(),
+        encryptedPhotoStorage: FakeEncryptedPhotoStorage = FakeEncryptedPhotoStorage(),
         errorLogger: FakeCaptureErrorLogger = FakeCaptureErrorLogger(),
         imageMetadataReader: FakeImageMetadataReader = FakeImageMetadataReader(),
         metadataLogger: FakeCaptureMetadataLogger = FakeCaptureMetadataLogger(),
         attemptIdGenerator: FakeCaptureAttemptIdGenerator = FakeCaptureAttemptIdGenerator(),
         diagnosticsLogger: FakeCaptureDiagnosticsLogger = FakeCaptureDiagnosticsLogger(),
+        video: FakeVideoCaptureController = FakeVideoCaptureController(),
         testScheduler: kotlinx.coroutines.test.TestCoroutineScheduler,
     ): CaptureCoordinator {
         // Burst scheduling reads elapsed time across multiple delay() calls within one
@@ -41,7 +45,9 @@ class CaptureCoordinatorTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         return CaptureCoordinator(
             camera,
+            video,
             storage,
+            encryptedPhotoStorage,
             timeProvider,
             TestDispatcherProvider(dispatcher),
             errorLogger,
@@ -461,5 +467,181 @@ class CaptureCoordinatorTest {
 
         val completed = sut.state.value as CaptureState.Completed
         assertThat(completed.result.attemptId).isEqualTo(diagnosticsLogger.loggedEvents.first().attemptId)
+    }
+
+    @Test
+    fun `video mode starts recording and stays in VideoRecording until stopped`() = runTest {
+        val video = FakeVideoCaptureController()
+        val sut = buildCoordinator(video = video, testScheduler = testScheduler)
+
+        val recordingJob = launch { sut.requestCapture(CaptureTrigger.ScreenTouchTop, CaptureMode.VIDEO) }
+        advanceUntilIdle()
+
+        assertThat(sut.state.value).isInstanceOf(CaptureState.VideoRecording::class.java)
+        assertThat(video.startCount).isEqualTo(1)
+        assertThat(video.stopCount).isEqualTo(0)
+
+        // Clean up: stop it through the normal mechanism rather than leaving the job dangling.
+        val stopJob = launch { sut.requestCapture(CaptureTrigger.VolumeUp) }
+        advanceUntilIdle()
+        recordingJob.join()
+        stopJob.join()
+    }
+
+    @Test
+    fun `a trigger during an active video recording stops it instead of being rejected`() = runTest {
+        val video = FakeVideoCaptureController(stopOutcome = VideoStopOutcome.Success("content://fake/video/1"))
+        val sut = buildCoordinator(video = video, testScheduler = testScheduler)
+
+        val recordingJob = launch { sut.requestCapture(CaptureTrigger.ScreenTouchTop, CaptureMode.VIDEO) }
+        advanceUntilIdle()
+        assertThat(sut.state.value).isInstanceOf(CaptureState.VideoRecording::class.java)
+
+        val stopJob = launch { sut.requestCapture(CaptureTrigger.VolumeUp) }
+        advanceUntilIdle()
+        recordingJob.join()
+        stopJob.join()
+
+        assertThat(video.startCount).isEqualTo(1)
+        assertThat(video.stopCount).isEqualTo(1)
+        val completed = sut.state.value as CaptureState.VideoCompleted
+        assertThat(completed.result.outcome).isEqualTo(CaptureOutcome.Success("content://fake/video/1"))
+        // The completed result still carries the trigger that *started* the recording, not the
+        // one that stopped it.
+        assertThat(completed.trigger).isEqualTo(CaptureTrigger.ScreenTouchTop)
+    }
+
+    @Test
+    fun `the stopping trigger does not also start its own capture, regardless of its configured mode`() = runTest {
+        val camera = FakeCameraCaptureController()
+        val video = FakeVideoCaptureController()
+        val sut = buildCoordinator(camera, video = video, testScheduler = testScheduler)
+
+        val recordingJob = launch { sut.requestCapture(CaptureTrigger.ScreenTouchTop, CaptureMode.VIDEO) }
+        advanceUntilIdle()
+
+        val stopJob = launch {
+            sut.requestCapture(CaptureTrigger.VolumeUp, CaptureMode.BURST, burstIntervalMillis = 250L)
+        }
+        advanceUntilIdle()
+        recordingJob.join()
+        stopJob.join()
+
+        assertThat(camera.captureCount).isEqualTo(0)
+        assertThat(camera.memoryCaptureCount).isEqualTo(0)
+        assertThat(sut.state.value).isInstanceOf(CaptureState.VideoCompleted::class.java)
+    }
+
+    @Test
+    fun `a video start failure completes immediately without ever recording`() = runTest {
+        val video = FakeVideoCaptureController(startOutcome = VideoStartOutcome.Failure("camera not ready"))
+        val sut = buildCoordinator(video = video, testScheduler = testScheduler)
+
+        sut.requestCapture(CaptureTrigger.ScreenTouchTop, CaptureMode.VIDEO)
+
+        assertThat(video.stopCount).isEqualTo(0)
+        val completed = sut.state.value as CaptureState.VideoCompleted
+        assertThat(completed.result.outcome).isInstanceOf(CaptureOutcome.Failure::class.java)
+    }
+
+    @Test
+    fun `a video stop failure is reported as a failed CaptureResult`() = runTest {
+        val video = FakeVideoCaptureController(stopOutcome = VideoStopOutcome.Failure("could not finalize"))
+        val sut = buildCoordinator(video = video, testScheduler = testScheduler)
+
+        val recordingJob = launch { sut.requestCapture(CaptureTrigger.ScreenTouchTop, CaptureMode.VIDEO) }
+        advanceUntilIdle()
+        val stopJob = launch { sut.requestCapture(CaptureTrigger.VolumeUp) }
+        advanceUntilIdle()
+        recordingJob.join()
+        stopJob.join()
+
+        val completed = sut.state.value as CaptureState.VideoCompleted
+        assertThat(completed.result.outcome).isInstanceOf(CaptureOutcome.Failure::class.java)
+    }
+
+    @Test
+    fun `stopping a video recording logs VideoStopRequested against the recording's own attempt id`() = runTest {
+        val video = FakeVideoCaptureController()
+        val diagnosticsLogger = FakeCaptureDiagnosticsLogger()
+        val sut = buildCoordinator(video = video, diagnosticsLogger = diagnosticsLogger, testScheduler = testScheduler)
+
+        val recordingJob = launch { sut.requestCapture(CaptureTrigger.ScreenTouchTop, CaptureMode.VIDEO) }
+        advanceUntilIdle()
+        val recordingAttemptId = video.startedAttemptIds.single()
+
+        val stopJob = launch { sut.requestCapture(CaptureTrigger.VolumeUp) }
+        advanceUntilIdle()
+        recordingJob.join()
+        stopJob.join()
+
+        val stopRequested = diagnosticsLogger.loggedEvents.filterIsInstance<CaptureDiagnosticEvent.VideoStopRequested>().single()
+        assertThat(stopRequested.attemptId).isEqualTo(recordingAttemptId)
+    }
+
+    @Test
+    fun `single-shot with encryptSaves false is unchanged - captures directly, never touches memory or EncryptedPhotoStorage`() = runTest {
+        val camera = FakeCameraCaptureController()
+        val storage = FakePhotoStorage()
+        val encryptedPhotoStorage = FakeEncryptedPhotoStorage()
+        val sut = buildCoordinator(camera, storage, encryptedPhotoStorage, testScheduler = testScheduler)
+
+        sut.requestCapture(CaptureTrigger.ScreenTouchTop, encryptSaves = false)
+
+        assertThat(camera.captureCount).isEqualTo(1)
+        assertThat(camera.memoryCaptureCount).isEqualTo(0)
+        assertThat(storage.finalized).hasSize(1)
+        assertThat(encryptedPhotoStorage.writtenPhotos).isEmpty()
+    }
+
+    @Test
+    fun `single-shot with encryptSaves true captures to memory and writes through EncryptedPhotoStorage, not PhotoStorage`() = runTest {
+        val jpegBytes = byteArrayOf(1, 2, 3)
+        val camera = FakeCameraCaptureController(memoryOutcome = { CameraCaptureMemoryOutcome.Success(jpegBytes) })
+        val storage = FakePhotoStorage()
+        val encryptedPhotoStorage = FakeEncryptedPhotoStorage()
+        val sut = buildCoordinator(camera, storage, encryptedPhotoStorage, testScheduler = testScheduler)
+
+        sut.requestCapture(CaptureTrigger.ScreenTouchTop, encryptSaves = true)
+
+        assertThat(camera.captureCount).isEqualTo(0)
+        assertThat(camera.memoryCaptureCount).isEqualTo(1)
+        assertThat(storage.created).isEmpty()
+        assertThat(encryptedPhotoStorage.writtenPhotos).hasSize(1)
+        assertThat(encryptedPhotoStorage.writtenPhotos.single().first).isEqualTo(jpegBytes)
+
+        val completed = sut.state.value as CaptureState.Completed
+        assertThat(completed.result.outcome).isInstanceOf(CaptureOutcome.Success::class.java)
+    }
+
+    @Test
+    fun `burst with encryptSaves true writes all four images through EncryptedPhotoStorage`() = runTest {
+        val camera = FakeCameraCaptureController(memoryOutcome = { CameraCaptureMemoryOutcome.Success(ByteArray(4)) })
+        val storage = FakePhotoStorage()
+        val encryptedPhotoStorage = FakeEncryptedPhotoStorage()
+        val sut = buildCoordinator(camera, storage, encryptedPhotoStorage, testScheduler = testScheduler)
+
+        sut.requestCapture(CaptureTrigger.ScreenTouchTop, CaptureMode.BURST, burstIntervalMillis = 500L, encryptSaves = true)
+        advanceUntilIdle()
+
+        assertThat(encryptedPhotoStorage.writtenPhotos).hasSize(BURST_IMAGE_COUNT)
+        assertThat(storage.created).isEmpty()
+        val completed = sut.state.value as CaptureState.BurstCompleted
+        assertThat(completed.results).hasSize(BURST_IMAGE_COUNT)
+        assertThat(completed.results.all { it.outcome is CaptureOutcome.Success }).isTrue()
+    }
+
+    @Test
+    fun `an EncryptedPhotoStorage failure reports CaptureOutcome Failure without falling back to PhotoStorage`() = runTest {
+        val camera = FakeCameraCaptureController(memoryOutcome = { CameraCaptureMemoryOutcome.Success(ByteArray(1)) })
+        val storage = FakePhotoStorage()
+        val encryptedPhotoStorage = FakeEncryptedPhotoStorage(failNextWrite = true)
+        val sut = buildCoordinator(camera, storage, encryptedPhotoStorage, testScheduler = testScheduler)
+
+        sut.requestCapture(CaptureTrigger.ScreenTouchTop, encryptSaves = true)
+
+        val completed = sut.state.value as CaptureState.Completed
+        assertThat(completed.result.outcome).isInstanceOf(CaptureOutcome.Failure::class.java)
+        assertThat(storage.created).isEmpty()
     }
 }

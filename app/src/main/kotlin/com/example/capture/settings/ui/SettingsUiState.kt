@@ -14,4 +14,8 @@ data class SettingsUiState(
     val burstIntervalMillis: Long = AppSettings.DEFAULT_BURST_INTERVAL_MILLIS,
     val captureAspectRatio: CaptureAspectRatio = CaptureAspectRatio.RATIO_4_3,
     val diagnosticsFileLoggingEnabled: Boolean = false,
+    val encryptSavedPhotos: Boolean = false,
+    /** True once a `.kkey` file exists (see `KeySessionRepository.state.hasKeyFile`) - the toggle is disabled while this is false. */
+    val encryptSavedPhotosAvailable: Boolean = false,
+    val hasEncryptedPhotosFolder: Boolean = false,
 )

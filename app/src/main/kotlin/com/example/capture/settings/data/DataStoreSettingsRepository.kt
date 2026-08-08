@@ -31,6 +31,8 @@ class DataStoreSettingsRepository @Inject constructor(
         val BURST_INTERVAL_MILLIS = longPreferencesKey("burst_interval_millis")
         val CAPTURE_ASPECT_RATIO = stringPreferencesKey("capture_aspect_ratio")
         val DIAGNOSTICS_FILE_LOGGING_ENABLED = booleanPreferencesKey("diagnostics_file_logging_enabled")
+        val ENCRYPT_SAVED_PHOTOS = booleanPreferencesKey("encrypt_saved_photos")
+        val ENCRYPTED_PHOTOS_FOLDER_URI = stringPreferencesKey("encrypted_photos_folder_uri")
 
         // One key per CaptureTriggerKind (see "Capture Mode" in app-spec.md) rather than the single
         // "capture_mode" key this replaced - that old key is simply orphaned/never read again, not
@@ -51,6 +53,8 @@ class DataStoreSettingsRepository @Inject constructor(
             captureAspectRatio = preferences[Keys.CAPTURE_ASPECT_RATIO]?.toCaptureAspectRatioOrDefault()
                 ?: CaptureAspectRatio.RATIO_4_3,
             diagnosticsFileLoggingEnabled = preferences[Keys.DIAGNOSTICS_FILE_LOGGING_ENABLED] ?: false,
+            encryptSavedPhotos = preferences[Keys.ENCRYPT_SAVED_PHOTOS] ?: false,
+            encryptedPhotosFolderUriString = preferences[Keys.ENCRYPTED_PHOTOS_FOLDER_URI],
         )
     }
 
@@ -82,6 +86,20 @@ class DataStoreSettingsRepository @Inject constructor(
 
     override suspend fun setDiagnosticsFileLoggingEnabled(enabled: Boolean) {
         context.settingsDataStore.edit { it[Keys.DIAGNOSTICS_FILE_LOGGING_ENABLED] = enabled }
+    }
+
+    override suspend fun setEncryptSavedPhotos(enabled: Boolean) {
+        context.settingsDataStore.edit { it[Keys.ENCRYPT_SAVED_PHOTOS] = enabled }
+    }
+
+    override suspend fun setEncryptedPhotosFolderUri(uriString: String?) {
+        context.settingsDataStore.edit { preferences ->
+            if (uriString != null) {
+                preferences[Keys.ENCRYPTED_PHOTOS_FOLDER_URI] = uriString
+            } else {
+                preferences.remove(Keys.ENCRYPTED_PHOTOS_FOLDER_URI)
+            }
+        }
     }
 
     // Falls back to the default rather than throwing if a future release ever removes/renames an

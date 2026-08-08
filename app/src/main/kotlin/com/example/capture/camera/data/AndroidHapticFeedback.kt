@@ -31,4 +31,16 @@ class AndroidHapticFeedback @Inject constructor(
         val safeDuration = durationMillis.coerceAtLeast(1L)
         vibrator.vibrate(VibrationEffect.createOneShot(safeDuration, VibrationEffect.DEFAULT_AMPLITUDE))
     }
+
+    override fun performVideoStopped(durationMillis: Long) {
+        if (!vibrator.hasVibrator()) return
+        val safeDuration = durationMillis.coerceAtLeast(1L)
+        // off, on, off, on: a genuine two-pulse pattern rather than one long buzz.
+        val timings = longArrayOf(0L, safeDuration, GAP_MILLIS, safeDuration)
+        vibrator.vibrate(VibrationEffect.createWaveform(timings, -1))
+    }
+
+    private companion object {
+        const val GAP_MILLIS = 100L
+    }
 }

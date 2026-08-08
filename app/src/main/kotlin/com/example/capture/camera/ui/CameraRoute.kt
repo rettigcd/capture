@@ -155,6 +155,7 @@ fun CameraRoute(
                 captureAspectRatio = uiState.captureAspectRatio,
                 modifier = previewModifier,
                 onImageCaptureReady = viewModel::attachImageCapture,
+                onVideoCaptureReady = viewModel::attachVideoCapture,
                 onCameraReady = viewModel::attachCamera,
                 onCameraDiagnostics = viewModel::onCameraDiagnostics,
             )

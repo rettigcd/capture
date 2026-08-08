@@ -52,10 +52,11 @@ data class CaptureResult(
 )
 
 /**
- * How many images a single capture command produces (see "Capture Mode" in app-spec.md).
- * Orthogonal to [CaptureTrigger]: the same touch/volume/voice trigger sources apply to both modes.
+ * How many images (or whether video) a single capture command produces (see "Capture Mode" in
+ * app-spec.md). Orthogonal to [CaptureTrigger]: the same touch/volume/voice trigger sources apply
+ * to all modes.
  */
-enum class CaptureMode { SINGLE_SHOT, BURST }
+enum class CaptureMode { SINGLE_SHOT, BURST, VIDEO }
 
 /** Fixed number of images a Burst Mode capture command requests (see "Burst Mode" in app-spec.md). */
 const val BURST_IMAGE_COUNT = 4
@@ -86,4 +87,26 @@ sealed interface CaptureState {
 
     /** Emitted once all [BURST_IMAGE_COUNT] images have been attempted, in capture order. */
     data class BurstCompleted(val results: List<CaptureResult>, val trigger: CaptureTrigger) : CaptureState
+
+    /**
+     * Emitted once a video recording has actually started (see "Video Mode" in app-spec.md), kept
+     * distinct from [Capturing] so the haptics collector can single-pulse on this and
+     * double-pulse on [VideoCompleted], mirroring [BurstStarted]/[BurstCompleted].
+     */
+    data class VideoRecording(val trigger: CaptureTrigger, val attemptId: CaptureAttemptId) : CaptureState
+
+    /** Emitted once a video recording has stopped, whether it stopped successfully or with an error. */
+    data class VideoCompleted(val result: CaptureResult, val trigger: CaptureTrigger) : CaptureState
+}
+
+/** Outcome of asking the camera hardware to start recording video. */
+sealed interface VideoStartOutcome {
+    data object Started : VideoStartOutcome
+    data class Failure(val message: String, val cause: Throwable? = null) : VideoStartOutcome
+}
+
+/** Outcome of asking the camera hardware to stop an in-progress video recording. */
+sealed interface VideoStopOutcome {
+    data class Success(val uriString: String) : VideoStopOutcome
+    data class Failure(val message: String, val cause: Throwable? = null) : VideoStopOutcome
 }

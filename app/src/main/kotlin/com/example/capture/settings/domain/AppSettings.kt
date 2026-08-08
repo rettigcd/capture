@@ -26,6 +26,17 @@ data class AppSettings(
      * `capture_diagnostics.log` for post-analysis.
      */
     val diagnosticsFileLoggingEnabled: Boolean = false,
+    /**
+     * Off by default. When on, Single-Shot and Burst captures are saved as encrypted `.kenc`
+     * files into [encryptedPhotosFolderUriString] instead of plaintext `MediaStore` images - see
+     * "Encrypt saved photos" in app-spec.md. Signing in is not required, only a key file (the
+     * encryption itself only ever needs the public key). Cleared back to `false` if the key file
+     * is ever found missing (see `SettingsViewModel`), so it never silently stays on pointing at
+     * a key that no longer exists.
+     */
+    val encryptSavedPhotos: Boolean = false,
+    /** The Storage Access Framework tree `Uri` (as a string) the user picked for [encryptSavedPhotos]'s output - null until a folder has ever been picked. */
+    val encryptedPhotosFolderUriString: String? = null,
 ) {
     companion object {
         const val DEFAULT_VIBRATION_DURATION_MILLIS = 60L

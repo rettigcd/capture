@@ -12,7 +12,7 @@ The app displays a full-screen live camera preview and takes a photograph when t
 
 All three inputs must invoke the same central capture operation. Do not implement three separate camera-capture paths.
 
-Each of these actions requests either a single photograph or a burst of four, depending on that specific action's own independently-configured capture mode (a screen touch is itself split into a top-half and a bottom-half trigger for this purpose - see "Capture Mode").
+Each of these actions requests a single photograph, a burst of four, or a video recording, depending on that specific action's own independently-configured capture mode (a screen touch is itself split into a top-half and a bottom-half trigger for this purpose - see "Capture Mode").
 
 Use a temporary application name such as `Capture` and package name `com.example.capture`. Keep names easy to change later.
 
@@ -62,7 +62,7 @@ When the app starts:
 6. Capture a picture when either volume-up or volume-down is pressed.
 7. Capture a picture when a supported spoken command is recognized.
 8. Display brief visual feedback when capture begins and when the picture is saved.
-9. Trigger a brief haptic vibration with a user-configurable duration (see "Settings"), so the user can tell a capture request was handled without having to look at the screen: in Single-Shot Mode this fires when the picture is saved successfully; in Burst Mode this fires once when the burst is triggered, not per image and not tied to save success (see "Burst Feedback").
+9. Trigger a brief haptic vibration with a user-configurable duration (see "Settings"), so the user can tell a capture request was handled without having to look at the screen: in Single-Shot Mode this fires when the picture is saved successfully; in Burst Mode this fires once when the burst is triggered, not per image and not tied to save success (see "Burst Feedback"); in Video Mode this fires once when the recording starts and twice when it stops (see "Video Mode").
 10. Prevent accidental duplicate captures caused by the same trigger or rapid repeated triggers.
 11. Remain responsive while the image is being saved.
 
@@ -81,6 +81,10 @@ Save photographs into a recognizable Pictures subfolder such as:
 Use a timestamp-based filename and a standard image format supported by CameraX.
 
 Correctly handle scoped storage and pending MediaStore entries. Clean up incomplete entries after a failed capture.
+
+Save videos (see "Video Mode") the same way - through `MediaStore`, not direct filesystem paths -
+into a recognizable Movies subfolder such as `Movies/Capture`, using a timestamp-based filename and
+a standard video format.
 
 Return a structured capture result containing at least:
 
@@ -557,11 +561,12 @@ preview area) is the "top half" trigger, and a tap landing in the bottom half is
 trigger - the same split applies regardless of whether the live preview or the privacy overlay
 image is currently shown (see "Overlay image visibility").
 
-Each of the six triggers is independently set to one of two capture modes:
+Each of the six triggers is independently set to one of three capture modes:
 
 * **Single-Shot Mode** - that trigger requests one image, matching the behavior described in
   "Application purpose" and "Initial application behavior" above.
 * **Burst Mode** - that trigger requests four images in quick succession (see "Burst Mode" below).
+* **Video Mode** - that trigger starts a video recording (see "Video Mode" below).
 
 A trigger's configured mode is entirely independent of every other trigger's - for example, Volume
 Up can be set to Burst Mode while the screen's top half stays set to Single-Shot Mode, and each
@@ -573,7 +578,9 @@ is a shared, one-at-a-time configuration rather than something chosen per captur
 trigger whose configured mode differs from whichever mode the pipeline is currently configured for
 incurs a one-time delay while the pipeline reconfigures itself for the new mode before that capture
 proceeds. Repeated use of the same trigger, or of triggers sharing the same configured mode, does
-not incur this delay.
+not incur this delay. Video Mode's recording capability does not participate in this
+reconfiguration - it is always available regardless of which mode the pipeline is currently
+configured for, since it needs no Single-Shot/Burst-specific latency or resolution treatment.
 
 ## Burst Mode
 
@@ -612,6 +619,31 @@ existing "reject or debounce duplicate rapid requests" responsibility described 
 coordination," not a separate mechanism - a capture command received mid-burst is simply ignored
 rather than starting an overlapping burst.
 
+## Video Mode
+
+When a trigger configured for Video Mode (see "Capture Mode") fires while no recording is in
+progress, it starts recording video (with audio, when microphone permission is currently granted -
+recording proceeds silently rather than blocking or prompting for permission if it is not) to the
+same photograph storage location's video equivalent (see "Photograph storage").
+
+While a recording is in progress, **any** trigger - regardless of that trigger's own configured
+capture mode, and regardless of whether it's the same trigger that started the recording - stops
+the active recording instead of starting a new capture of its own. For example, if Volume Up starts
+a recording and the screen's top half is separately configured for Burst Mode, touching the top
+half while the recording is active stops the recording; it does not also start a burst. Only once
+the recording has stopped does every trigger return to behaving according to its own individually
+configured mode again.
+
+This "any trigger stops it" behavior is an extension of the same one-capture-operation-at-a-time
+principle described in "Capture coordination" and "Burst Mode" (a capture command received while
+another is already in progress does not start a second, overlapping one) - here, the in-progress
+operation is a recording, and the arriving command's role changes from "rejected" to "stop this."
+
+The device vibrates once when the recording starts, using the same configured vibration duration
+and pulse as Burst Mode's start feedback (see "Burst Feedback"), and vibrates twice in quick
+succession when the recording stops - a distinct pattern so starting and stopping a recording are
+distinguishable by feel alone, without looking at the screen.
+
 ## Capture Performance
 
 Burst Mode is intended to prioritize responsiveness over maximum image quality. During Burst Mode,
@@ -639,7 +671,7 @@ overlay image (see "Overlay image visibility") - it must remain visible even whi
 covering the live preview, unlike the rest of the capture-status UI, which hides along with the
 preview it's describing.
 
-It has two modes, matching Capture Mode:
+It has two visual modes, matching Capture Mode:
 
 * **Single-Shot Mode**: an indeterminate spinner (in continuous motion, no specific completion
   fraction) appears the moment a single-shot capture begins, and disappears once that capture
@@ -647,6 +679,10 @@ It has two modes, matching Capture Mode:
 * **Burst Mode**: a determinate progress control appears the moment a burst is accepted, starting
   at 0%. It advances in four equal 25% steps as each of the burst's four images finishes, reaching
   100% once the fourth image is done, then disappears once the burst is completely finished.
+
+**Video Mode** (see "Video Mode") reuses Single-Shot Mode's indeterminate spinner rather than a
+third visual style: it appears the moment a recording starts and disappears once the recording
+stops, for the whole duration of the recording regardless of how long that turns out to be.
 
 Like the rest of the capture-status UI (see "Error Handling"), this indicator carries no
 success/failure detail - it only reflects that a capture is in progress and, for Burst Mode, how
@@ -671,7 +707,7 @@ Instead, log errors to an application log file, in either JSON or plain-text for
 error should include, when available:
 
 * Date and time
-* Active capture mode (Single-Shot or Burst)
+* Active capture mode (Single-Shot, Burst, or Video)
 * Burst image number (1-4), when applicable
 * Configured burst interval, when applicable
 * Output filename or destination
@@ -705,10 +741,10 @@ The settings screen lets the user configure:
    app-private storage at selection time (while the picker's grant is still valid) and persist a
    reference to that private copy instead, so the durability of the setting does not depend on the
    picker's grant lifetime at all.
-3. **Capture mode, per trigger** - six independent controls (for example, six two-option segmented
-   buttons, one per trigger), each choosing between Single-Shot Mode and Burst Mode for one of the
-   six capture triggers: screen tap top half, screen tap bottom half, shutter button, volume up,
-   volume down, and voice command (see "Capture Mode").
+3. **Capture mode, per trigger** - six independent controls (for example, six three-option segmented
+   buttons, one per trigger), each choosing between Single-Shot Mode, Burst Mode, and Video Mode for
+   one of the six capture triggers: screen tap top half, screen tap bottom half, shutter button,
+   volume up, volume down, and voice command (see "Capture Mode").
 4. **Burst interval** - a slider with discrete snap points every 250 ms from 250 ms to 2 seconds,
    defaulting to 500 ms (see "Burst Mode").
 5. **Capture aspect ratio** - a control choosing between 4:3 (default) and 16:9 (see "Capture

@@ -8,7 +8,17 @@ package com.example.capture.camera.domain
 interface HapticFeedback {
     /**
      * A short pulse confirming a capture succeeded - meant to be felt, not looked at.
-     * [durationMillis] comes from the user's vibration-duration setting.
+     * [durationMillis] comes from the user's vibration-duration setting. Also used for Video
+     * Mode's recording-started feedback (see "Video Mode" in app-spec.md: "same vibration as
+     * Burst Mode").
      */
     fun performCaptureSuccess(durationMillis: Long)
+
+    /**
+     * Two pulses confirming a Video Mode recording stopped - distinct from
+     * [performCaptureSuccess] so stopping a recording is distinguishable by feel from starting
+     * one (see "Video Mode" in app-spec.md). [durationMillis] comes from the user's
+     * vibration-duration setting, same as [performCaptureSuccess].
+     */
+    fun performVideoStopped(durationMillis: Long)
 }

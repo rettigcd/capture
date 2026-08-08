@@ -5,15 +5,18 @@ import com.example.capture.camera.data.AndroidHapticFeedback
 import com.example.capture.camera.data.AndroidImageMetadataReader
 import com.example.capture.camera.data.CameraXCaptureController
 import com.example.capture.camera.data.CameraXFlashTorchController
+import com.example.capture.camera.data.CameraXVideoCaptureController
 import com.example.capture.camera.data.DataStoreOverlayVisibilityRepository
 import com.example.capture.camera.data.FileCaptureErrorLogger
 import com.example.capture.camera.data.FileCaptureMetadataLogger
 import com.example.capture.camera.data.MediaStorePhotoStorage
+import com.example.capture.camera.data.SafEncryptedPhotoStorage
 import com.example.capture.camera.domain.CameraCaptureController
 import com.example.capture.camera.domain.CaptureAttemptIdGenerator
 import com.example.capture.camera.domain.CaptureDiagnosticsLogger
 import com.example.capture.camera.domain.CaptureErrorLogger
 import com.example.capture.camera.domain.CaptureMetadataLogger
+import com.example.capture.camera.domain.EncryptedPhotoStorage
 import com.example.capture.camera.domain.FlashTorchController
 import com.example.capture.camera.domain.GestureDiagnosticsLogger
 import com.example.capture.camera.domain.HapticFeedback
@@ -21,6 +24,7 @@ import com.example.capture.camera.domain.ImageMetadataReader
 import com.example.capture.camera.domain.OverlayVisibilityRepository
 import com.example.capture.camera.domain.PhotoStorage
 import com.example.capture.camera.domain.RandomCaptureAttemptIdGenerator
+import com.example.capture.camera.domain.VideoCaptureController
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -34,7 +38,13 @@ abstract class CameraModule {
     abstract fun bindCameraCaptureController(impl: CameraXCaptureController): CameraCaptureController
 
     @Binds
+    abstract fun bindVideoCaptureController(impl: CameraXVideoCaptureController): VideoCaptureController
+
+    @Binds
     abstract fun bindPhotoStorage(impl: MediaStorePhotoStorage): PhotoStorage
+
+    @Binds
+    abstract fun bindEncryptedPhotoStorage(impl: SafEncryptedPhotoStorage): EncryptedPhotoStorage
 
     @Binds
     abstract fun bindHapticFeedback(impl: AndroidHapticFeedback): HapticFeedback

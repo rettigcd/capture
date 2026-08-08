@@ -15,6 +15,7 @@ import com.example.capture.camera.domain.CaptureMetadataLogEntry
 import com.example.capture.camera.domain.CaptureMetadataLogger
 import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.camera.domain.CaptureTriggerKind
+import com.example.capture.camera.domain.EncryptedPhotoStorage
 import com.example.capture.camera.domain.FlashTorchController
 import com.example.capture.camera.domain.GestureDiagnosticEvent
 import com.example.capture.camera.domain.GestureDiagnosticsLogger
@@ -24,13 +25,32 @@ import com.example.capture.camera.domain.ImageMetadataReader
 import com.example.capture.camera.domain.OverlayVisibilityRepository
 import com.example.capture.camera.domain.PendingPhotoEntry
 import com.example.capture.camera.domain.PhotoStorage
+import com.example.capture.camera.domain.VideoCaptureController
+import com.example.capture.camera.domain.VideoStartOutcome
+import com.example.capture.camera.domain.VideoStopOutcome
 import com.example.capture.common.DispatcherProvider
 import com.example.capture.common.TimeProvider
+import com.example.capture.security.data.KeySessionKeyStore
+import com.example.capture.security.domain.ChangePassphraseResult
+import com.example.capture.security.domain.CreateKeyResult
+import com.example.capture.security.domain.EncryptionKeyPair
+import com.example.capture.security.domain.ImportKeyResult
+import com.example.capture.security.domain.ImportedKeyPair
+import com.example.capture.security.domain.IncorrectPassphraseException
+import com.example.capture.security.domain.KeyBackupRepository
+import com.example.capture.security.domain.KeySessionRepository
+import com.example.capture.security.domain.KeySessionState
+import com.example.capture.security.domain.KeyStatus
+import com.example.capture.security.domain.PhotoEncryptor
+import com.example.capture.security.domain.PrivateKeyException
+import com.example.capture.security.domain.PublicKeyInfo
+import com.example.capture.security.domain.SignInResult
 import com.example.capture.settings.domain.AppSettings
 import com.example.capture.settings.domain.OverlayImageStore
 import com.example.capture.settings.domain.SettingsRepository
 import com.example.capture.voice.domain.VoiceCommandRecognizer
 import com.example.capture.voice.domain.VoiceRecognitionState
+import java.security.PrivateKey
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -106,6 +126,34 @@ class FakeCameraCaptureController(
     }
 }
 
+/**
+ * [startOutcome]/[stopOutcome] are settable fields (rather than constructor lambdas like
+ * [FakeCameraCaptureController]'s) since Video Mode tests typically only need one fixed
+ * outcome per call, and a settable field reads more directly at the call site than a
+ * single-value lambda would.
+ */
+class FakeVideoCaptureController(
+    var startOutcome: VideoStartOutcome = VideoStartOutcome.Started,
+    var stopOutcome: VideoStopOutcome = VideoStopOutcome.Success("content://fake/video/0"),
+) : VideoCaptureController {
+    var startCount: Int = 0
+        private set
+    var stopCount: Int = 0
+        private set
+    val startedAttemptIds = mutableListOf<CaptureAttemptId>()
+
+    override suspend fun startRecording(timestampMillis: Long, attemptId: CaptureAttemptId): VideoStartOutcome {
+        startCount++
+        startedAttemptIds += attemptId
+        return startOutcome
+    }
+
+    override suspend fun stopRecording(): VideoStopOutcome {
+        stopCount++
+        return stopOutcome
+    }
+}
+
 class FakePhotoStorage(
     private var nextId: Int = 0,
     var failCreate: Boolean = false,
@@ -140,14 +188,39 @@ class FakePhotoStorage(
     }
 }
 
+class FakeEncryptedPhotoStorage(
+    private var nextId: Int = 0,
+    var failNextWrite: Boolean = false,
+) : EncryptedPhotoStorage {
+    val writtenPhotos = mutableListOf<Pair<ByteArray, Long>>()
+
+    override suspend fun writeEncryptedPhoto(jpegBytes: ByteArray, timestampMillis: Long): String {
+        if (failNextWrite) {
+            failNextWrite = false
+            throw IOException("Fake: unable to write encrypted photo")
+        }
+        writtenPhotos += jpegBytes to timestampMillis
+        return "content://fake/encrypted-photo/${nextId++}.kenc"
+    }
+}
+
 class FakeHapticFeedback : HapticFeedback {
     var performCaptureSuccessCount: Int = 0
         private set
     val recordedDurationsMillis = mutableListOf<Long>()
 
+    var performVideoStoppedCount: Int = 0
+        private set
+    val recordedVideoStoppedDurationsMillis = mutableListOf<Long>()
+
     override fun performCaptureSuccess(durationMillis: Long) {
         performCaptureSuccessCount++
         recordedDurationsMillis += durationMillis
+    }
+
+    override fun performVideoStopped(durationMillis: Long) {
+        performVideoStoppedCount++
+        recordedVideoStoppedDurationsMillis += durationMillis
     }
 }
 
@@ -179,6 +252,14 @@ class FakeSettingsRepository(initial: AppSettings = AppSettings()) : SettingsRep
 
     override suspend fun setDiagnosticsFileLoggingEnabled(enabled: Boolean) {
         _settings.value = _settings.value.copy(diagnosticsFileLoggingEnabled = enabled)
+    }
+
+    override suspend fun setEncryptSavedPhotos(enabled: Boolean) {
+        _settings.value = _settings.value.copy(encryptSavedPhotos = enabled)
+    }
+
+    override suspend fun setEncryptedPhotosFolderUri(uriString: String?) {
+        _settings.value = _settings.value.copy(encryptedPhotosFolderUriString = uriString)
     }
 }
 
@@ -298,5 +379,186 @@ class FakeGestureDiagnosticsLogger : GestureDiagnosticsLogger {
 
     override fun log(event: GestureDiagnosticEvent) {
         loggedEvents += event
+    }
+}
+
+/**
+ * In-memory `.kkey` stand-in: one stored key pair + the passphrase it was last written under.
+ * [failNextWith], if set, is thrown (and cleared) by the next call to any method.
+ */
+class FakeKeyBackupRepository : KeyBackupRepository {
+    var storedKeyPair: EncryptionKeyPair? = null
+    var storedPassphrase: String? = null
+    var storedFingerprint: String = "fake-fingerprint"
+    var failNextWith: Exception? = null
+
+    val createKeyFileCalls = mutableListOf<String>()
+    val importKeyFileBytesCalls = mutableListOf<ByteArray>()
+    val changePassphraseCalls = mutableListOf<Pair<String, String>>()
+
+    override suspend fun hasKeyFile(): Boolean = storedKeyPair != null
+
+    override suspend fun createKeyFile(passphrase: String): EncryptionKeyPair {
+        maybeFail()
+        createKeyFileCalls += passphrase
+        val keyPair = EncryptionKeyPair.generate()
+        storedKeyPair = keyPair
+        storedPassphrase = passphrase
+        return keyPair
+    }
+
+    override suspend fun readPublicKeyInfo(): PublicKeyInfo? {
+        maybeFail()
+        val keyPair = storedKeyPair ?: return null
+        return PublicKeyInfo(keyPair.public64, storedFingerprint)
+    }
+
+    override suspend fun importFromCurrentFile(passphrase: String): ImportedKeyPair {
+        maybeFail()
+        val keyPair = storedKeyPair ?: throw IncorrectPassphraseException()
+        if (passphrase != storedPassphrase) throw IncorrectPassphraseException()
+        return ImportedKeyPair(keyPair.privateKey, keyPair.public64, storedFingerprint)
+    }
+
+    override suspend fun importKeyFileBytes(bytes: ByteArray) {
+        maybeFail()
+        importKeyFileBytesCalls += bytes
+        storedKeyPair = EncryptionKeyPair.generate()
+        storedPassphrase = null // unknown to this fake - tests that need a follow-up sign-in should set storedPassphrase directly.
+    }
+
+    override suspend fun exportKeyFileBytes(): ByteArray {
+        maybeFail()
+        return storedKeyPair?.public64?.toByteArray() ?: ByteArray(0)
+    }
+
+    override suspend fun changePassphrase(currentPassphrase: String, newPassphrase: String) {
+        maybeFail()
+        if (currentPassphrase != storedPassphrase) throw IncorrectPassphraseException()
+        changePassphraseCalls += currentPassphrase to newPassphrase
+        storedPassphrase = newPassphrase
+    }
+
+    override fun keyFilePath(): String = "fake/KeyPair.kkey"
+
+    private fun maybeFail() {
+        failNextWith?.let {
+            failNextWith = null
+            throw it
+        }
+    }
+}
+
+/** Records every dialog-triggering call; [state] is settable directly for tests that don't go through a real sign-in flow. */
+class FakeKeySessionRepository : KeySessionRepository {
+    private val _state = MutableStateFlow(KeySessionState())
+    override val state: StateFlow<KeySessionState> = _state.asStateFlow()
+
+    var nextSignInResult: SignInResult = SignInResult.Success
+    var nextCreateKeyResult: CreateKeyResult = CreateKeyResult.Success
+    var nextImportKeyResult: ImportKeyResult = ImportKeyResult.Success
+    var nextChangePassphraseResult: ChangePassphraseResult = ChangePassphraseResult.Success
+    var nextVerifyPassphraseResult: Boolean = true
+
+    var startObservingAppLifecycleCallCount = 0
+        private set
+    var resetInactivityTimerCallCount = 0
+        private set
+    var initializeCallCount = 0
+        private set
+
+    val signInPassphrases = mutableListOf<String>()
+    val importedKeyFileBytes = mutableListOf<ByteArray>()
+    val changePassphraseCalls = mutableListOf<Pair<String, String>>()
+
+    fun emit(state: KeySessionState) {
+        _state.value = state
+    }
+
+    override fun startObservingAppLifecycle() {
+        startObservingAppLifecycleCallCount++
+    }
+
+    override fun resetInactivityTimer() {
+        resetInactivityTimerCallCount++
+    }
+
+    override fun keyFilePath(): String = "fake/KeyPair.kkey"
+
+    override suspend fun initialize() {
+        initializeCallCount++
+    }
+
+    override suspend fun signIn(passphrase: String): SignInResult {
+        signInPassphrases += passphrase
+        return nextSignInResult
+    }
+
+    override suspend fun signOut() {
+        _state.value = _state.value.copy(keyStatus = KeyStatus.PUBLIC)
+    }
+
+    override suspend fun createKey(passphrase: String): CreateKeyResult = nextCreateKeyResult
+
+    override suspend fun importKeyFile(sourceBytes: ByteArray): ImportKeyResult {
+        importedKeyFileBytes += sourceBytes
+        return nextImportKeyResult
+    }
+
+    override suspend fun changePassphrase(currentPassphrase: String, newPassphrase: String): ChangePassphraseResult {
+        changePassphraseCalls += currentPassphrase to newPassphrase
+        return nextChangePassphraseResult
+    }
+
+    override suspend fun verifyPassphrase(passphrase: String): Boolean = nextVerifyPassphraseResult
+}
+
+/** One instance covers both roles [KencPhotoEncryptor][com.example.capture.security.data.KencPhotoEncryptor] plays: [PhotoEncryptor] and [KeySessionKeyStore]. */
+class FakePhotoEncryptor : PhotoEncryptor, KeySessionKeyStore {
+    override var hasPublicKey: Boolean = false
+        private set
+    override var hasDecryptionKey: Boolean = false
+        private set
+
+    var failNextDecryptWith: PrivateKeyException? = null
+
+    val encryptedPlainBytes = mutableListOf<ByteArray>()
+    val decryptedCipherBytes = mutableListOf<ByteArray>()
+
+    override fun setPublicKey(publicKeyBase64: String) {
+        hasPublicKey = true
+        hasDecryptionKey = false
+    }
+
+    override fun clearKeys() {
+        hasPublicKey = false
+        hasDecryptionKey = false
+    }
+
+    override fun setPrivateKey(candidate: PrivateKey?): Boolean {
+        hasDecryptionKey = candidate != null
+        return true
+    }
+
+    override fun encrypt(plain: ByteArray): ByteArray {
+        check(hasPublicKey) { "Public key is not set." }
+        encryptedPlainBytes += plain
+        return plain
+    }
+
+    override fun encryptToKencFile(imageBytes: ByteArray, metadataJson: String): ByteArray {
+        check(hasPublicKey) { "Public key is not set." }
+        encryptedPlainBytes += imageBytes
+        return imageBytes + metadataJson.toByteArray(Charsets.UTF_8)
+    }
+
+    override fun decrypt(data: ByteArray): ByteArray {
+        failNextDecryptWith?.let {
+            failNextDecryptWith = null
+            throw it
+        }
+        if (!hasDecryptionKey) throw PrivateKeyException(PrivateKeyException.Reason.MISSING_KEY)
+        decryptedCipherBytes += data
+        return data
     }
 }

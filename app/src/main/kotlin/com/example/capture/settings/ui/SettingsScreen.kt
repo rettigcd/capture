@@ -54,6 +54,9 @@ fun SettingsScreen(
     onBurstIntervalChanged: (Long) -> Unit,
     onCaptureAspectRatioChanged: (CaptureAspectRatio) -> Unit,
     onDiagnosticsFileLoggingChanged: (Boolean) -> Unit,
+    onEncryptSavedPhotosChanged: (Boolean) -> Unit,
+    onChooseEncryptedPhotosFolderClick: () -> Unit,
+    onNavigateToEncryptionKey: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -81,6 +84,14 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
+            EncryptSavedPhotosSetting(
+                enabled = uiState.encryptSavedPhotos,
+                available = uiState.encryptSavedPhotosAvailable,
+                hasFolder = uiState.hasEncryptedPhotosFolder,
+                onEnabledChanged = onEncryptSavedPhotosChanged,
+                onChooseFolderClick = onChooseEncryptedPhotosFolderClick,
+            )
+            HorizontalDivider()
             VibrationDurationSetting(
                 durationMillis = uiState.vibrationDurationMillis,
                 onDurationChanged = onVibrationDurationChanged,
@@ -109,6 +120,49 @@ fun SettingsScreen(
             DiagnosticsFileLoggingSetting(
                 enabled = uiState.diagnosticsFileLoggingEnabled,
                 onEnabledChanged = onDiagnosticsFileLoggingChanged,
+            )
+            HorizontalDivider()
+            Button(onClick = onNavigateToEncryptionKey) {
+                Text(stringResource(R.string.settings_encryption_key_button))
+            }
+        }
+    }
+}
+
+/**
+ * Off by default (see "Encrypt saved photos" in app-spec.md). Disabled entirely while no
+ * encryption key file exists ([available] false) - signing in is not required, only a key file,
+ * since encryption only ever needs the public key. The "Choose folder"/"Change folder" button is
+ * always available (independent of [enabled]) so a folder can be picked or changed at any time;
+ * picking one turns the toggle on.
+ */
+@Composable
+private fun EncryptSavedPhotosSetting(
+    enabled: Boolean,
+    available: Boolean,
+    hasFolder: Boolean,
+    onEnabledChanged: (Boolean) -> Unit,
+    onChooseFolderClick: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.settings_encrypt_saved_photos_label))
+        if (!available) {
+            Text(
+                text = stringResource(R.string.settings_encrypt_saved_photos_unavailable_message),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(
+            checked = enabled,
+            onCheckedChange = onEnabledChanged,
+            enabled = available,
+            modifier = Modifier.testTag("encrypt_saved_photos_switch"),
+        )
+        Button(onClick = onChooseFolderClick) {
+            Text(
+                stringResource(
+                    if (hasFolder) R.string.settings_change_encrypted_photos_folder_button else R.string.settings_choose_encrypted_photos_folder_button,
+                ),
             )
         }
     }
@@ -202,7 +256,7 @@ private fun CaptureModeRow(trigger: CaptureTriggerKind, captureMode: CaptureMode
             SegmentedButton(
                 selected = captureMode == CaptureMode.SINGLE_SHOT,
                 onClick = { onCaptureModeChanged(CaptureMode.SINGLE_SHOT) },
-                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 3),
                 modifier = Modifier.testTag("${testTagPrefix}_single_shot"),
             ) {
                 Text(stringResource(R.string.settings_capture_mode_single_shot))
@@ -210,10 +264,18 @@ private fun CaptureModeRow(trigger: CaptureTriggerKind, captureMode: CaptureMode
             SegmentedButton(
                 selected = captureMode == CaptureMode.BURST,
                 onClick = { onCaptureModeChanged(CaptureMode.BURST) },
-                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 3),
                 modifier = Modifier.testTag("${testTagPrefix}_burst"),
             ) {
                 Text(stringResource(R.string.settings_capture_mode_burst))
+            }
+            SegmentedButton(
+                selected = captureMode == CaptureMode.VIDEO,
+                onClick = { onCaptureModeChanged(CaptureMode.VIDEO) },
+                shape = SegmentedButtonDefaults.itemShape(index = 2, count = 3),
+                modifier = Modifier.testTag("${testTagPrefix}_video"),
+            ) {
+                Text(stringResource(R.string.settings_capture_mode_video))
             }
         }
     }
@@ -270,6 +332,10 @@ private fun CaptureAspectRatioSetting(
 private fun DiagnosticsFileLoggingSetting(enabled: Boolean, onEnabledChanged: (Boolean) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.settings_diagnostics_file_logging_label))
-        Switch(checked = enabled, onCheckedChange = onEnabledChanged)
+        Switch(
+            checked = enabled,
+            onCheckedChange = onEnabledChanged,
+            modifier = Modifier.testTag("diagnostics_file_logging_switch"),
+        )
     }
 }
