@@ -6,6 +6,7 @@ import com.example.capture.camera.data.AndroidImageMetadataReader
 import com.example.capture.camera.data.CameraXCaptureController
 import com.example.capture.camera.data.CameraXFlashTorchController
 import com.example.capture.camera.data.CameraXVideoCaptureController
+import com.example.capture.camera.data.CameraXZoomController
 import com.example.capture.camera.data.DataStoreOverlayVisibilityRepository
 import com.example.capture.camera.data.FileCaptureErrorLogger
 import com.example.capture.camera.data.FileCaptureMetadataLogger
@@ -25,6 +26,7 @@ import com.example.capture.camera.domain.OverlayVisibilityRepository
 import com.example.capture.camera.domain.PhotoStorage
 import com.example.capture.camera.domain.RandomCaptureAttemptIdGenerator
 import com.example.capture.camera.domain.VideoCaptureController
+import com.example.capture.camera.domain.ZoomController
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -59,6 +61,9 @@ abstract class CameraModule {
 
     @Binds
     abstract fun bindFlashTorchController(impl: CameraXFlashTorchController): FlashTorchController
+
+    @Binds
+    abstract fun bindZoomController(impl: CameraXZoomController): ZoomController
 
     @Binds
     abstract fun bindImageMetadataReader(impl: AndroidImageMetadataReader): ImageMetadataReader

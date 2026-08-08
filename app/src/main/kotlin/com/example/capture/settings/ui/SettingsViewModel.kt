@@ -138,6 +138,11 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun onZoomLevelChanged(level: Int) {
+        val clamped = level.coerceIn(AppSettings.ZOOM_LEVEL_RANGE)
+        applicationScope.launch { settingsRepository.setZoomLevel(clamped) }
+    }
+
     private companion object {
         const val STOP_TIMEOUT_MILLIS = 5_000L
         const val TAG = "SettingsViewModel"
@@ -154,4 +159,5 @@ private fun AppSettings.toUiState(hasKeyFile: Boolean) = SettingsUiState(
     encryptSavedPhotos = encryptSavedPhotos,
     encryptSavedPhotosAvailable = hasKeyFile,
     hasEncryptedPhotosFolder = encryptedPhotosFolderUriString != null,
+    zoomLevel = zoomLevel,
 )

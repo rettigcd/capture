@@ -18,4 +18,5 @@ data class SettingsUiState(
     /** True once a `.kkey` file exists (see `KeySessionRepository.state.hasKeyFile`) - the toggle is disabled while this is false. */
     val encryptSavedPhotosAvailable: Boolean = false,
     val hasEncryptedPhotosFolder: Boolean = false,
+    val zoomLevel: Int = AppSettings.DEFAULT_ZOOM_LEVEL,
 )

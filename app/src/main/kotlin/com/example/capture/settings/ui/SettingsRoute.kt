@@ -72,6 +72,7 @@ fun SettingsRoute(
         onDiagnosticsFileLoggingChanged = viewModel::onDiagnosticsFileLoggingChanged,
         onEncryptSavedPhotosChanged = viewModel::onEncryptSavedPhotosToggled,
         onChooseEncryptedPhotosFolderClick = viewModel::onChooseEncryptedPhotosFolderClicked,
+        onZoomLevelChanged = viewModel::onZoomLevelChanged,
         onNavigateToEncryptionKey = onNavigateToEncryptionKey,
         onBack = onBack,
         modifier = modifier,

@@ -47,6 +47,7 @@ class SettingsScreenTest {
         onDiagnosticsFileLoggingChanged: (Boolean) -> Unit = {},
         onEncryptSavedPhotosChanged: (Boolean) -> Unit = {},
         onChooseEncryptedPhotosFolderClick: () -> Unit = {},
+        onZoomLevelChanged: (Int) -> Unit = {},
         onNavigateToEncryptionKey: () -> Unit = {},
         onBack: () -> Unit = {},
     ) {
@@ -61,6 +62,7 @@ class SettingsScreenTest {
                 onDiagnosticsFileLoggingChanged = onDiagnosticsFileLoggingChanged,
                 onEncryptSavedPhotosChanged = onEncryptSavedPhotosChanged,
                 onChooseEncryptedPhotosFolderClick = onChooseEncryptedPhotosFolderClick,
+                onZoomLevelChanged = onZoomLevelChanged,
                 onNavigateToEncryptionKey = onNavigateToEncryptionKey,
                 onBack = onBack,
             )
@@ -216,6 +218,15 @@ class SettingsScreenTest {
             .performClick()
 
         assertThat(selectedRatio).isEqualTo(CaptureAspectRatio.RATIO_16_9)
+    }
+
+    @Test
+    fun zoomLevelLabel_reflectsTheCurrentValue() {
+        setScreen(SettingsUiState(zoomLevel = 4))
+
+        composeTestRule
+            .onNodeWithText(context.getString(R.string.settings_zoom_label, 4))
+            .assertIsDisplayed()
     }
 
     @Test

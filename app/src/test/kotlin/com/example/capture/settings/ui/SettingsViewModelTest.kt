@@ -189,6 +189,27 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun `changing the zoom level updates state and is clamped to the valid range`() = runTest {
+        val repository = FakeSettingsRepository()
+        val vm = buildViewModel(repository)
+        val collectJob = launch { vm.uiState.collect {} }
+
+        vm.onZoomLevelChanged(3)
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.zoomLevel).isEqualTo(3)
+
+        vm.onZoomLevelChanged(10)
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.zoomLevel).isEqualTo(AppSettings.ZOOM_LEVEL_RANGE.last)
+
+        vm.onZoomLevelChanged(0)
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.zoomLevel).isEqualTo(AppSettings.ZOOM_LEVEL_RANGE.first)
+
+        collectJob.cancel()
+    }
+
+    @Test
     fun `changing the capture aspect ratio updates state and is persisted`() = runTest {
         val repository = FakeSettingsRepository()
         val vm = buildViewModel(repository)

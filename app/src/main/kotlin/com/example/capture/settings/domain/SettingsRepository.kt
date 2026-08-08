@@ -21,4 +21,5 @@ interface SettingsRepository {
     suspend fun setDiagnosticsFileLoggingEnabled(enabled: Boolean)
     suspend fun setEncryptSavedPhotos(enabled: Boolean)
     suspend fun setEncryptedPhotosFolderUri(uriString: String?)
+    suspend fun setZoomLevel(level: Int)
 }

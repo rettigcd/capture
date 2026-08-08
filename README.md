@@ -1410,3 +1410,21 @@ row), `lintDebug` (0 issues), and `assembleDebug` all passed. `SafEncryptedPhoto
 with `CameraPreview.kt`'s CameraX binding code never having unit coverage of its own - so it still
 needs a real-device smoke test (pick a folder, capture with the toggle on, confirm a real `.kenc`
 file lands there) before this feature is considered fully verified.
+
+A camera zoom setting was added next: a five-position (1x-5x integer) slider on the Settings
+screen, positioned directly below the "Encrypt saved photos" controls. Unlike capture aspect ratio
+(the other camera-affecting setting), zoom is applied live via `CameraControl.setZoomRatio`
+(`ZoomController`/`CameraXZoomController`, the only place that API is touched, following the exact
+`CameraXFlashTorchController`/`FlashTorchController` pattern) rather than by rebuilding or
+rebinding any CameraX use case - so it needs no burst-in-progress deferral the way aspect ratio
+does, and it affects Single-Shot, Burst, and Video Mode uniformly since all three share one bound
+camera. The one real design wrinkle: the camera pipeline *does* still rebind on its own whenever
+capture mode or aspect ratio changes (`CameraPreview.kt`'s `LaunchedEffect`), which hands back a
+fresh `Camera` with zoom reset to 1x - so `CameraViewModel` doesn't just apply zoom reactively to
+setting changes, it also re-applies the current zoom level every time `CameraControlHolder.camera`
+newly becomes non-null, via a `combine` of the two. `testDebugUnitTest` (211/211 tests, 4 new -
+`CameraViewModel` applying zoom once a camera becomes available and re-applying it on a setting
+change while bound, `SettingsViewModel` clamping the level to 1-5, and the settings screen's label
+reflecting the current value), `lintDebug` (0 issues), and `assembleDebug` all passed. Device
+verification (confirming the preview and a real capture actually zoom, and that zoom survives a
+capture-mode-triggered camera rebind) has not been performed.

@@ -28,6 +28,7 @@ import com.example.capture.camera.domain.PhotoStorage
 import com.example.capture.camera.domain.VideoCaptureController
 import com.example.capture.camera.domain.VideoStartOutcome
 import com.example.capture.camera.domain.VideoStopOutcome
+import com.example.capture.camera.domain.ZoomController
 import com.example.capture.common.DispatcherProvider
 import com.example.capture.common.TimeProvider
 import com.example.capture.security.data.KeySessionKeyStore
@@ -261,6 +262,10 @@ class FakeSettingsRepository(initial: AppSettings = AppSettings()) : SettingsRep
     override suspend fun setEncryptedPhotosFolderUri(uriString: String?) {
         _settings.value = _settings.value.copy(encryptedPhotosFolderUriString = uriString)
     }
+
+    override suspend fun setZoomLevel(level: Int) {
+        _settings.value = _settings.value.copy(zoomLevel = level)
+    }
 }
 
 class FakeCaptureErrorLogger : CaptureErrorLogger {
@@ -305,6 +310,14 @@ class FakeFlashTorchController : FlashTorchController {
 
     override suspend fun disableFlashAndTorch() {
         disableCallCount++
+    }
+}
+
+class FakeZoomController : ZoomController {
+    val appliedZoomLevels = mutableListOf<Int>()
+
+    override suspend fun setZoomLevel(level: Int) {
+        appliedZoomLevels += level
     }
 }
 

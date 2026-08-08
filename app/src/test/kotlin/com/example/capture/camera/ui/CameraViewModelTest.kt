@@ -1,5 +1,9 @@
 package com.example.capture.camera.ui
 
+import androidx.camera.core.Camera
+import androidx.camera.core.CameraControl
+import androidx.camera.core.CameraInfo
+import androidx.camera.core.impl.CameraConfig
 import com.example.capture.camera.data.CameraControlHolder
 import com.example.capture.camera.data.ImageCaptureUseCaseHolder
 import com.example.capture.camera.data.VideoCaptureUseCaseHolder
@@ -32,6 +36,7 @@ import com.example.capture.testing.FakeSettingsRepository
 import com.example.capture.testing.FakeTimeProvider
 import com.example.capture.testing.FakeVideoCaptureController
 import com.example.capture.testing.FakeVoiceCommandRecognizer
+import com.example.capture.testing.FakeZoomController
 import com.example.capture.testing.TestDispatcherProvider
 import com.example.capture.voice.domain.VoiceRecognitionState
 import com.google.common.truth.Truth.assertThat
@@ -82,6 +87,7 @@ class CameraViewModelTest {
         settings: FakeSettingsRepository = FakeSettingsRepository(),
         overlayVisibility: FakeOverlayVisibilityRepository = FakeOverlayVisibilityRepository(),
         flashTorchController: FakeFlashTorchController = FakeFlashTorchController(),
+        zoomController: FakeZoomController = FakeZoomController(),
         errorLogger: FakeCaptureErrorLogger = FakeCaptureErrorLogger(),
         imageMetadataReader: FakeImageMetadataReader = FakeImageMetadataReader(),
         metadataLogger: FakeCaptureMetadataLogger = FakeCaptureMetadataLogger(),
@@ -115,6 +121,7 @@ class CameraViewModelTest {
             settings,
             overlayVisibility,
             flashTorchController,
+            zoomController,
             gestureDiagnosticsLogger,
             captureDiagnosticsLogger,
             applicationScope,
@@ -538,6 +545,41 @@ class CameraViewModelTest {
     }
 
     @Test
+    fun `zoom level is applied once the camera becomes available`() = runTest {
+        val settings = FakeSettingsRepository(AppSettings(zoomLevel = 3))
+        val zoom = FakeZoomController()
+        val vm = buildViewModel(settings = settings, zoomController = zoom, scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+        assertThat(zoom.appliedZoomLevels).isEmpty()
+
+        vm.attachCamera(StubCamera())
+        advanceUntilIdle()
+
+        assertThat(zoom.appliedZoomLevels).containsExactly(3)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `changing the zoom level while a camera is bound reapplies it`() = runTest {
+        val settings = FakeSettingsRepository(AppSettings(zoomLevel = 1))
+        val zoom = FakeZoomController()
+        val vm = buildViewModel(settings = settings, zoomController = zoom, scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+        vm.attachCamera(StubCamera())
+        advanceUntilIdle()
+        assertThat(zoom.appliedZoomLevels).containsExactly(1)
+
+        settings.setZoomLevel(4)
+        advanceUntilIdle()
+
+        assertThat(zoom.appliedZoomLevels).containsExactly(1, 4).inOrder()
+
+        collectJob.cancel()
+    }
+
+    @Test
     fun `uiState reflects the currently configured capture aspect ratio`() = runTest {
         val settings = FakeSettingsRepository(AppSettings(captureAspectRatio = CaptureAspectRatio.RATIO_16_9))
         val vm = buildViewModel(settings = settings, scheduler = testScheduler)
@@ -741,4 +783,15 @@ class CameraViewModelTest {
 
         collectJob.cancel()
     }
+}
+
+/**
+ * A minimal, never-actually-invoked [Camera] - the zoom tests above only need
+ * [com.example.capture.camera.data.CameraControlHolder] to observe *some* non-null value, never
+ * a functioning one, since [FakeZoomController] doesn't touch it.
+ */
+private class StubCamera : Camera {
+    override fun getCameraControl(): CameraControl = throw UnsupportedOperationException()
+    override fun getCameraInfo(): CameraInfo = throw UnsupportedOperationException()
+    override fun getExtendedConfig(): CameraConfig = throw UnsupportedOperationException()
 }

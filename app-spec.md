@@ -753,8 +753,15 @@ The settings screen lets the user configure:
    sizing"). Changing this setting while a burst is in progress must not alter the active burst -
    the new ratio takes effect only once that burst finishes. Applying a new ratio may briefly stop
    and rebind the affected camera use cases; no image may be captured during that rebind.
+6. **Camera zoom** - a slider with five discrete positions, 1x through 5x in integer steps,
+   defaulting to 1x (no zoom). There is a single zoom level, not a per-trigger or per-mode setting
+   the way capture mode is: it applies uniformly to the live preview and to Single-Shot, Burst, and
+   Video Mode capture alike (see "Video Mode"). Unlike capture aspect ratio, changing this setting
+   takes effect immediately on the live camera control without stopping, rebuilding, or rebinding
+   any camera use case, so it incurs none of aspect ratio's rebind delay and needs no
+   burst-in-progress deferral.
 
-Persist all of these settings (ten distinct persisted values in total, once the six per-trigger
+Persist all of these settings (eleven distinct persisted values in total, once the six per-trigger
 capture modes are counted individually), and the overlay-visibility state described above, across
 app restarts
 (e.g. with Jetpack DataStore). Keep the settings screen testable the same way as the camera screen:

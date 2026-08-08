@@ -37,6 +37,12 @@ data class AppSettings(
     val encryptSavedPhotos: Boolean = false,
     /** The Storage Access Framework tree `Uri` (as a string) the user picked for [encryptSavedPhotos]'s output - null until a folder has ever been picked. */
     val encryptedPhotosFolderUriString: String? = null,
+    /**
+     * 1x (no zoom) by default. A single value, not per-trigger or per-mode - applies uniformly to
+     * the live preview and to Single-Shot, Burst, and Video Mode capture alike (see "Camera zoom"
+     * in app-spec.md).
+     */
+    val zoomLevel: Int = DEFAULT_ZOOM_LEVEL,
 ) {
     companion object {
         const val DEFAULT_VIBRATION_DURATION_MILLIS = 60L
@@ -55,5 +61,11 @@ data class AppSettings(
         /** The burst-interval slider on the settings screen snaps to these 250 ms increments. */
         val BURST_INTERVAL_RANGE_MILLIS = 250L..2_000L
         const val BURST_INTERVAL_STEP_MILLIS = 250L
+
+        const val DEFAULT_ZOOM_LEVEL = 1
+
+        /** The zoom slider on the settings screen snaps to these five integer positions. */
+        val ZOOM_LEVEL_RANGE = 1..5
+        const val ZOOM_LEVEL_STEP = 1
     }
 }

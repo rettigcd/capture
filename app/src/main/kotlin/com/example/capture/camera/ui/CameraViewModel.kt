@@ -23,6 +23,7 @@ import com.example.capture.camera.domain.GestureDiagnosticEvent
 import com.example.capture.camera.domain.GestureDiagnosticsLogger
 import com.example.capture.camera.domain.HapticFeedback
 import com.example.capture.camera.domain.OverlayVisibilityRepository
+import com.example.capture.camera.domain.ZoomController
 import com.example.capture.camera.domain.kind
 import com.example.capture.camera.domain.toDiagnosticSource
 import com.example.capture.common.ApplicationScope
@@ -65,6 +66,7 @@ class CameraViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val overlayVisibilityRepository: OverlayVisibilityRepository,
     private val flashTorchController: FlashTorchController,
+    private val zoomController: ZoomController,
     private val gestureDiagnosticsLogger: GestureDiagnosticsLogger,
     private val captureDiagnosticsLogger: CaptureDiagnosticsLogger,
     @ApplicationScope private val applicationScope: CoroutineScope,
@@ -204,6 +206,17 @@ class CameraViewModel @Inject constructor(
             ) { burstActive, overlayVisible -> burstActive || overlayVisible }
                 .distinctUntilChanged()
                 .collect { mustDisableFlashAndTorch -> if (mustDisableFlashAndTorch) flashTorchController.disableFlashAndTorch() }
+        }
+        // Applies the configured zoom level (see "Camera zoom" in app-spec.md) both when it
+        // changes and whenever the camera itself (re)binds - captureAspectRatio/captureMode
+        // changes rebind the camera pipeline (see CameraPreview.kt), which would otherwise reset
+        // to no zoom until the next unrelated settings change happened to re-trigger this.
+        viewModelScope.launch {
+            combine(
+                cameraControlHolder.camera.map { it != null }.distinctUntilChanged(),
+                settingsRepository.settings.map { it.zoomLevel }.distinctUntilChanged(),
+            ) { cameraReady, zoomLevel -> cameraReady to zoomLevel }
+                .collect { (cameraReady, zoomLevel) -> if (cameraReady) zoomController.setZoomLevel(zoomLevel) }
         }
         // Mirrors the persisted capture-aspect-ratio setting into effectiveCaptureAspectRatio -
         // except while a burst is in progress, in which case the change is held back (see the
