@@ -1428,3 +1428,13 @@ change while bound, `SettingsViewModel` clamping the level to 1-5, and the setti
 reflecting the current value), `lintDebug` (0 issues), and `assembleDebug` all passed. Device
 verification (confirming the preview and a real capture actually zoom, and that zoom survives a
 capture-mode-triggered camera rebind) has not been performed.
+
+`SafEncryptedPhotoStorage`'s `.kenc` metadata block was then extended with a `logicalFilename`
+field alongside the existing `capturedAtMillis` one, set to the same `IMG_yyyyMMdd_HHmmssSSS.jpg`
+name `MediaStorePhotoStorage` would have used had the photo been saved unencrypted (the on-disk
+`.kenc` file itself keeps its random `UUID`-based name, since that's what avoids collisions and
+keeps filenames non-identifying in the picked SAF folder). No test changes were needed -
+`SafEncryptedPhotoStorage` has no unit coverage of its own, as noted above. `testDebugUnitTest`
+(211/211 tests), `lintDebug` (0 issues), and `assembleDebug` all passed unchanged. This still needs
+the same real-device smoke test called out above, now also checking that a decrypted `.kenc`'s
+metadata carries the expected `logicalFilename`.
