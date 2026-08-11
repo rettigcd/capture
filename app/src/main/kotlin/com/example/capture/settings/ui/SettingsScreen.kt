@@ -40,11 +40,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.example.capture.R
-import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.camera.domain.CaptureTriggerKind
 import com.example.capture.settings.domain.AppSettings
-import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
 /**
@@ -61,11 +59,9 @@ fun SettingsScreen(
     onDeleteCoverPhotoClick: (Int) -> Unit,
     onCaptureModeChanged: (CaptureTriggerKind, CaptureMode) -> Unit,
     onBurstIntervalChanged: (Long) -> Unit,
-    onCaptureAspectRatioChanged: (CaptureAspectRatio) -> Unit,
     onDiagnosticsFileLoggingChanged: (Boolean) -> Unit,
     onEncryptSavedPhotosChanged: (Boolean) -> Unit,
     onChooseEncryptedPhotosFolderClick: () -> Unit,
-    onZoomLevelChanged: (Int) -> Unit,
     onNavigateToEncryptionKey: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
@@ -102,11 +98,6 @@ fun SettingsScreen(
                 onChooseFolderClick = onChooseEncryptedPhotosFolderClick,
             )
             HorizontalDivider()
-            ZoomLevelSetting(
-                level = uiState.zoomLevel,
-                onLevelChanged = onZoomLevelChanged,
-            )
-            HorizontalDivider()
             VibrationDurationSetting(
                 durationMillis = uiState.vibrationDurationMillis,
                 onDurationChanged = onVibrationDurationChanged,
@@ -126,11 +117,6 @@ fun SettingsScreen(
             BurstIntervalSetting(
                 intervalMillis = uiState.burstIntervalMillis,
                 onIntervalChanged = onBurstIntervalChanged,
-            )
-            HorizontalDivider()
-            CaptureAspectRatioSetting(
-                aspectRatio = uiState.captureAspectRatio,
-                onAspectRatioChanged = onCaptureAspectRatioChanged,
             )
             HorizontalDivider()
             DiagnosticsFileLoggingSetting(
@@ -181,26 +167,6 @@ private fun EncryptSavedPhotosSetting(
                 ),
             )
         }
-    }
-}
-
-/**
- * Five discrete positions, 1x through 5x (see "Camera zoom" in app-spec.md) - a single value, not
- * per-trigger or per-mode, applied identically to the live preview and to Single-Shot, Burst, and
- * Video Mode capture alike.
- */
-@Composable
-private fun ZoomLevelSetting(level: Int, onLevelChanged: (Int) -> Unit) {
-    Column {
-        Text(stringResource(R.string.settings_zoom_label, level))
-        val range = AppSettings.ZOOM_LEVEL_RANGE
-        val stepCount = (range.last - range.first) / AppSettings.ZOOM_LEVEL_STEP
-        Slider(
-            value = level.toFloat(),
-            onValueChange = { onLevelChanged(it.roundToInt()) },
-            valueRange = range.first.toFloat()..range.last.toFloat(),
-            steps = (stepCount - 1).coerceAtLeast(0),
-        )
     }
 }
 
@@ -371,33 +337,6 @@ private fun BurstIntervalSetting(intervalMillis: Long, onIntervalChanged: (Long)
             valueRange = range.first.toFloat()..range.last.toFloat(),
             steps = (stepCount - 1).coerceAtLeast(0),
         )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun CaptureAspectRatioSetting(
-    aspectRatio: CaptureAspectRatio,
-    onAspectRatioChanged: (CaptureAspectRatio) -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(stringResource(R.string.settings_aspect_ratio_label))
-        SingleChoiceSegmentedButtonRow {
-            SegmentedButton(
-                selected = aspectRatio == CaptureAspectRatio.RATIO_4_3,
-                onClick = { onAspectRatioChanged(CaptureAspectRatio.RATIO_4_3) },
-                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-            ) {
-                Text(stringResource(R.string.settings_aspect_ratio_4_3))
-            }
-            SegmentedButton(
-                selected = aspectRatio == CaptureAspectRatio.RATIO_16_9,
-                onClick = { onAspectRatioChanged(CaptureAspectRatio.RATIO_16_9) },
-                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-            ) {
-                Text(stringResource(R.string.settings_aspect_ratio_16_9))
-            }
-        }
     }
 }
 

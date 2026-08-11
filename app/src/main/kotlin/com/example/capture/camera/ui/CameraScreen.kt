@@ -6,6 +6,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -27,10 +28,14 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -49,6 +54,7 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
@@ -65,6 +71,7 @@ import com.example.capture.camera.domain.GestureClassification
 import com.example.capture.camera.domain.GestureDiagnosticEvent
 import com.example.capture.camera.domain.previewRatio
 import com.example.capture.permissions.PermissionStatus
+import com.example.capture.settings.domain.AppSettings
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -84,6 +91,8 @@ fun CameraScreen(
     onVoiceTriggerToggle: (Boolean) -> Unit,
     onOverlayVisibilityChanged: (Boolean) -> Unit,
     onCoverPhotoCycleRequested: () -> Unit,
+    onCaptureAspectRatioChanged: (CaptureAspectRatio) -> Unit,
+    onZoomLevelChanged: (Int) -> Unit,
     onRequestCameraPermission: () -> Unit,
     onOpenSystemSettings: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -100,9 +109,10 @@ fun CameraScreen(
                 uiState = uiState,
                 onScreenTouch = onScreenTouch,
                 onShutterButtonClick = onShutterButtonClick,
-                onVoiceTriggerToggle = onVoiceTriggerToggle,
                 onOverlayVisibilityChanged = onOverlayVisibilityChanged,
                 onCoverPhotoCycleRequested = onCoverPhotoCycleRequested,
+                onCaptureAspectRatioChanged = onCaptureAspectRatioChanged,
+                onZoomLevelChanged = onZoomLevelChanged,
                 onGestureDiagnosticEvent = onGestureDiagnosticEvent,
                 diagnosticsOverlayEnabled = diagnosticsOverlayEnabled,
                 diagnosticsOverlayInfo = diagnosticsOverlayInfo,
@@ -133,6 +143,23 @@ fun CameraScreen(
             Icon(Icons.Filled.Settings, contentDescription = null, tint = Color.White)
         }
 
+        // Positioned between the debug diagnostics icon (top-start, debug builds only) and the
+        // settings gear icon (top-end) - see "UI requirements" in app-spec.md - rather than
+        // stacked underneath the gear icon. Only shown once camera permission is granted, matching
+        // this control's old position nested inside GrantedCameraContent.
+        if (uiState.cameraPermission == PermissionStatus.GRANTED) {
+            VoiceTriggerControl(
+                enabled = uiState.voiceTriggerEnabled,
+                listening = uiState.voiceListening,
+                errorMessage = uiState.voiceError,
+                onToggle = onVoiceTriggerToggle,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(top = 8.dp),
+            )
+        }
+
         // Debug-only: never shown in a Release build (see "Debug Overlay" in app-spec.md), even
         // though the toggle state itself is plain in-memory ViewModel state - BuildConfig.DEBUG is
         // a compile-time constant, so R8 dead-code-eliminates this branch entirely in Release.
@@ -157,9 +184,10 @@ private fun GrantedCameraContent(
     uiState: CameraUiState,
     onScreenTouch: (isTopHalf: Boolean) -> Unit,
     onShutterButtonClick: () -> Unit,
-    onVoiceTriggerToggle: (Boolean) -> Unit,
     onOverlayVisibilityChanged: (Boolean) -> Unit,
     onCoverPhotoCycleRequested: () -> Unit,
+    onCaptureAspectRatioChanged: (CaptureAspectRatio) -> Unit,
+    onZoomLevelChanged: (Int) -> Unit,
     onGestureDiagnosticEvent: (GestureDiagnosticEvent) -> Unit,
     diagnosticsOverlayEnabled: Boolean,
     diagnosticsOverlayInfo: DiagnosticsOverlayInfo,
@@ -274,19 +302,22 @@ private fun GrantedCameraContent(
             )
         }
 
-        VoiceTriggerControl(
-            enabled = uiState.voiceTriggerEnabled,
-            listening = uiState.voiceListening,
-            errorMessage = uiState.voiceError,
-            onToggle = onVoiceTriggerToggle,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                // statusBarsPadding() first, matching the gear icon's own inset, so the fixed
-                // 72.dp below reliably clears it regardless of the device's actual status bar/
-                // notch height - see the gear IconButton's modifier for why that inset is there.
-                .statusBarsPadding()
-                .padding(top = 72.dp, end = 16.dp),
-        )
+        // Compact capture-aspect-ratio and camera-zoom controls (see "Camera zoom" and "Capture
+        // Aspect Ratio and Preview Framing" in app-spec.md) - moved off the settings screen since
+        // both are adjusted often enough while framing a shot that a trip to settings would be
+        // disruptive. Positioned just above the shutter button and hidden along with it while
+        // Overlay View is shown, so neither sits on top of the cover photo.
+        if (!uiState.overlayVisible) {
+            CompactCameraControls(
+                aspectRatio = uiState.captureAspectRatio,
+                onAspectRatioChanged = onCaptureAspectRatioChanged,
+                zoomLevel = uiState.zoomLevel,
+                onZoomLevelChanged = onZoomLevelChanged,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = COMPACT_CONTROLS_BOTTOM_PADDING.dp),
+            )
+        }
 
         if (!uiState.overlayVisible) {
             val shutterDescription = stringResource(R.string.shutter_button_content_description)
@@ -425,6 +456,65 @@ private const val SWIPE_THRESHOLD_DP = 32
 
 private const val OVERLAY_ANIMATION_DURATION_MILLIS = 200
 
+/** Clears the shutter FAB's own `bottom = 32.dp` padding plus its `72.dp` size, with an 8.dp gap. */
+private const val COMPACT_CONTROLS_BOTTOM_PADDING = 112
+
+/**
+ * Compact capture-aspect-ratio and camera-zoom controls (see "Camera zoom" and "Capture Aspect
+ * Ratio and Preview Framing" in app-spec.md), moved off the settings screen since both are
+ * adjusted often enough while framing a shot. Sized to take up as little of the live preview as
+ * practical - small segmented buttons with no separate label text above them, side by side in one
+ * row rather than stacked - unlike their old settings-screen versions (a full-width slider with a
+ * "Zoom: Nx" label, and a labelled segmented row).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CompactCameraControls(
+    aspectRatio: CaptureAspectRatio,
+    onAspectRatioChanged: (CaptureAspectRatio) -> Unit,
+    zoomLevel: Int,
+    onZoomLevelChanged: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = modifier) {
+        SingleChoiceSegmentedButtonRow {
+            SegmentedButton(
+                selected = aspectRatio == CaptureAspectRatio.RATIO_4_3,
+                onClick = { onAspectRatioChanged(CaptureAspectRatio.RATIO_4_3) },
+                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                modifier = Modifier.testTag("camera_aspect_ratio_4_3"),
+            ) {
+                Text(stringResource(R.string.settings_aspect_ratio_4_3), style = MaterialTheme.typography.labelSmall)
+            }
+            SegmentedButton(
+                selected = aspectRatio == CaptureAspectRatio.RATIO_16_9,
+                onClick = { onAspectRatioChanged(CaptureAspectRatio.RATIO_16_9) },
+                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                modifier = Modifier.testTag("camera_aspect_ratio_16_9"),
+            ) {
+                Text(stringResource(R.string.settings_aspect_ratio_16_9), style = MaterialTheme.typography.labelSmall)
+            }
+        }
+        SingleChoiceSegmentedButtonRow {
+            val zoomRange = AppSettings.ZOOM_LEVEL_RANGE
+            val zoomCount = zoomRange.last - zoomRange.first + 1
+            for (level in zoomRange) {
+                SegmentedButton(
+                    selected = zoomLevel == level,
+                    onClick = { onZoomLevelChanged(level) },
+                    shape = SegmentedButtonDefaults.itemShape(index = level - zoomRange.first, count = zoomCount),
+                    modifier = Modifier.testTag("camera_zoom_${level}x"),
+                ) {
+                    Text(
+                        stringResource(R.string.camera_zoom_level_label, level),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun DiagnosticsOverlay(info: DiagnosticsOverlayInfo, aspectRatio: CaptureAspectRatio, modifier: Modifier = Modifier) {
     Card(
@@ -487,7 +577,7 @@ private fun VoiceTriggerControl(
     onToggle: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(horizontalAlignment = Alignment.End, modifier = modifier) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = modifier) {
         Card {
             Row(
                 verticalAlignment = Alignment.CenterVertically,

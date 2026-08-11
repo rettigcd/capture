@@ -3,7 +3,6 @@ package com.example.capture.settings.ui
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.camera.domain.CaptureTriggerKind
 import com.example.capture.camera.domain.OverlayVisibilityRepository
@@ -124,10 +123,6 @@ class SettingsViewModel @Inject constructor(
         applicationScope.launch { settingsRepository.setBurstIntervalMillis(clamped) }
     }
 
-    fun onCaptureAspectRatioChanged(ratio: CaptureAspectRatio) {
-        applicationScope.launch { settingsRepository.setCaptureAspectRatio(ratio) }
-    }
-
     fun onDiagnosticsFileLoggingChanged(enabled: Boolean) {
         applicationScope.launch { settingsRepository.setDiagnosticsFileLoggingEnabled(enabled) }
     }
@@ -167,11 +162,6 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun onZoomLevelChanged(level: Int) {
-        val clamped = level.coerceIn(AppSettings.ZOOM_LEVEL_RANGE)
-        applicationScope.launch { settingsRepository.setZoomLevel(clamped) }
-    }
-
     private companion object {
         const val STOP_TIMEOUT_MILLIS = 5_000L
         const val TAG = "SettingsViewModel"
@@ -183,10 +173,8 @@ private fun AppSettings.toUiState(hasKeyFile: Boolean) = SettingsUiState(
     coverPhotoUriStrings = coverPhotoUriStrings,
     captureModeByTrigger = captureModeByTrigger,
     burstIntervalMillis = burstIntervalMillis,
-    captureAspectRatio = captureAspectRatio,
     diagnosticsFileLoggingEnabled = diagnosticsFileLoggingEnabled,
     encryptSavedPhotos = encryptSavedPhotos,
     encryptSavedPhotosAvailable = hasKeyFile,
     hasEncryptedPhotosFolder = encryptedPhotosFolderUriString != null,
-    zoomLevel = zoomLevel,
 )

@@ -638,6 +638,39 @@ class CameraViewModelTest {
     }
 
     @Test
+    fun `uiState reflects the currently configured zoom level`() = runTest {
+        val settings = FakeSettingsRepository(AppSettings(zoomLevel = 4))
+        val vm = buildViewModel(settings = settings, scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.zoomLevel).isEqualTo(4)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `changing the zoom level from the camera screen updates state and is clamped to the valid range`() = runTest {
+        val settings = FakeSettingsRepository()
+        val vm = buildViewModel(settings = settings, scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+
+        vm.onZoomLevelChanged(3)
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.zoomLevel).isEqualTo(3)
+
+        vm.onZoomLevelChanged(10)
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.zoomLevel).isEqualTo(AppSettings.ZOOM_LEVEL_RANGE.last)
+
+        vm.onZoomLevelChanged(0)
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.zoomLevel).isEqualTo(AppSettings.ZOOM_LEVEL_RANGE.first)
+
+        collectJob.cancel()
+    }
+
+    @Test
     fun `uiState reflects the currently configured capture aspect ratio`() = runTest {
         val settings = FakeSettingsRepository(AppSettings(captureAspectRatio = CaptureAspectRatio.RATIO_16_9))
         val vm = buildViewModel(settings = settings, scheduler = testScheduler)
@@ -645,6 +678,21 @@ class CameraViewModelTest {
         advanceUntilIdle()
 
         assertThat(vm.uiState.value.captureAspectRatio).isEqualTo(CaptureAspectRatio.RATIO_16_9)
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `changing the capture aspect ratio from the camera screen updates state and is persisted`() = runTest {
+        val settings = FakeSettingsRepository()
+        val vm = buildViewModel(settings = settings, scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+
+        vm.onCaptureAspectRatioChanged(CaptureAspectRatio.RATIO_16_9)
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.captureAspectRatio).isEqualTo(CaptureAspectRatio.RATIO_16_9)
+        assertThat(settings.settings.value.captureAspectRatio).isEqualTo(CaptureAspectRatio.RATIO_16_9)
 
         collectJob.cancel()
     }

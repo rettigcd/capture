@@ -304,12 +304,12 @@ is gated on the *camera* screen being the active `NavHost` destination (`MainAct
 `navController.currentDestination?.route`), so it correctly stops working - and volume keys
 correctly resume adjusting media volume - while the settings screen is open instead.
 
-**The capture-status indicator and shutter button are hidden while a cover photo is shown**, not
-just covered by it - `GrantedCameraContent` conditionally composes both only when
-`!uiState.overlayVisible`, since they'd otherwise visually sit on top of the cover photo instead of
-appearing hidden underneath it. The voice-trigger control and the settings gear icon are unaffected
-and stay visible either way. Tapping the cover photo still captures a photo even with the shutter
-button hidden.
+**The capture-status indicator, shutter button, and compact zoom/aspect-ratio controls are hidden
+while a cover photo is shown**, not just covered by it - `GrantedCameraContent` conditionally
+composes all three only when `!uiState.overlayVisible`, since they'd otherwise visually sit on top
+of the cover photo instead of appearing hidden underneath it. The voice-trigger control and the
+settings gear icon are unaffected and stay visible either way. Tapping the cover photo still
+captures a photo even with the shutter button hidden.
 
 **Overlay visibility never blanks the screen.** If it was last left visible but no cover photo has
 ever been configured, `CameraViewModel` falls back to showing the live preview (`overlayVisible` is
@@ -589,10 +589,10 @@ A gear icon in the top-right corner of the camera screen (always visible, regard
 permission state) opens a separate, full-screen settings screen (`settings/ui/SettingsScreen.kt`),
 reached and left via `androidx.navigation.compose.NavHost` in `CaptureApp.kt`; the system/gesture
 back action returns to the camera screen normally. The screen's content is vertically scrollable
-(`Modifier.verticalScroll`) now that six settings no longer reliably fit a single screen without
+(`Modifier.verticalScroll`) since its controls no longer reliably fit a single screen without
 scrolling on every device/test window size.
 
-The settings screen has six controls, all backed by `SettingsRepository` /
+The settings screen has four controls, all backed by `SettingsRepository` /
 `DataStoreSettingsRepository` (Jetpack DataStore Preferences, so values persist across app
 restarts):
 
@@ -611,11 +611,42 @@ restarts):
    Burst Mode" and "Video Mode" above).
 4. **Burst interval** - a `Slider` snapped to 250 ms increments from 250 ms to 2 s
    (`AppSettings.BURST_INTERVAL_RANGE_MILLIS`), defaulting to 500 ms.
-5. **Capture aspect ratio** - a `SingleChoiceSegmentedButtonRow` choosing between 4:3 (default)
-   and 16:9 (see "Capture aspect ratio and preview framing" above).
-6. **Save diagnostic logs to file** - a `Switch`, off by default, controlling only whether
+5. **Save diagnostic logs to file** - a `Switch`, off by default, controlling only whether
    capture/gesture diagnostic events are *additionally* written to a file; Logcat output is
    unaffected either way (see "Developer diagnostics" above).
+
+**Capture aspect ratio and camera zoom live on the camera screen instead** (see "Compact camera zoom
+and aspect ratio controls" below), not here - both are adjusted often enough while actually framing
+a shot that a settings-screen round trip would be disruptive. They're still persisted through the
+exact same `SettingsRepository` as the controls above; only which screen renders their control
+changed.
+
+### Compact camera zoom and aspect ratio controls
+
+`CompactCameraControls` in `CameraScreen.kt` renders both as small `SingleChoiceSegmentedButtonRow`s
+side by side - "4:3"/"16:9" for aspect ratio, "1x" through "5x" for zoom - with no separate label
+text above them, unlike their old settings-screen versions (a full-width `Slider` with a "Zoom: Nx"
+label, and a labelled segmented row). They're positioned `Alignment.BottomCenter`, offset up by a
+fixed `112.dp` (the shutter FAB's own `32.dp` bottom padding plus its `72.dp` size plus an `8.dp`
+gap) so the row sits directly above the shutter button rather than overlapping it, and - like the
+shutter button - only composed while `!uiState.overlayVisible`, so neither sits on top of a cover
+photo. `CameraViewModel.onCaptureAspectRatioChanged`/`onZoomLevelChanged` persist through the same
+`SettingsRepository.setCaptureAspectRatio`/`setZoomLevel` the old settings-screen controls used;
+`CameraUiState.captureAspectRatio` already existed (it also drives preview framing) and gained a
+sibling `zoomLevel` field read straight from `settingsRepository.settings` in the `uiState` combine.
+
+**The voice-trigger control moved to the top-center of the screen**, between the debug diagnostics
+icon (top-start, debug builds only) and the settings gear icon (top-end), instead of stacked
+underneath the gear icon on the right. It moved from being composed inside `GrantedCameraContent`
+to `CameraScreen` itself, now explicitly gated on `uiState.cameraPermission == PermissionStatus
+.GRANTED` (previously implicit, since `GrantedCameraContent` was only ever composed under that same
+condition) so it keeps the same "camera-permission-granted" visibility it always had. This
+uncovered one real test collision: `CameraScreenTest`'s existing top-half-tap test clicked at
+`(width / 2f, height * 0.1f)`, which now lands on the relocated voice control's `Card` instead of
+reaching the gesture surface underneath it - fixed by moving the sampled point down to 35% of the
+screen height (still comfortably the top half, and clear of the whole icon row regardless of its
+exact width), the same "off-center to dodge an interactive element" fix already used for the
+bottom-half tap test and the shutter button.
 
 **The picker's own Uri is not kept long-term.** It's tempting to assume the Photo Picker's
 `content://` Uri stays readable indefinitely once granted - no `ContentResolver
@@ -640,11 +671,13 @@ common flow immediately after picking an image (pick it, see the thumbnail updat
 a DataStore write still in flight on `viewModelScope` at that moment could be cancelled before it
 durably reached disk, so a freshly-picked image could silently fail to survive an app restart.
 `onVibrationDurationChanged`/`onCoverPhotoSelected`/`onCoverPhotoDeleted`/`onCaptureModeChanged`/`onBurstIntervalChanged`/
-`onCaptureAspectRatioChanged`/`onDiagnosticsFileLoggingChanged` all launch on the injected `@ApplicationScope` `CoroutineScope` instead (the same one `CameraViewModel`
+`onDiagnosticsFileLoggingChanged` all launch on the injected `@ApplicationScope` `CoroutineScope` instead (the same one `CameraViewModel`
 already uses to release the voice recognizer after `onCleared()`, and to persist overlay
 visibility/the active cover-photo index - see above), which outlives the settings screen. `SettingsViewModelTest`'s `"a selection write survives the view model being
 cleared right afterward"` case reproduces this with a real `ViewModelStore` to guard against a
-regression.
+regression. `CameraViewModel.onCaptureAspectRatioChanged`/`onZoomLevelChanged` (see "Compact camera
+zoom and aspect ratio controls" below) apply the exact same `@ApplicationScope` reasoning, now that
+those two writes originate from the camera screen instead.
 
 ## How photographs are stored
 
@@ -829,12 +862,21 @@ since none of it is fully covered by automated tests:
 - [ ] **Vibration duration setting:** moving the slider changes the felt pulse length on the next
       capture; the value survives an app restart.
 - [ ] **Overlay swipe gestures:** with a cover photo configured, a left swipe on the live preview
-      slides it in from the right edge and settles over the preview; the shutter button disappears
-      (the voice control, gear icon, and capture progress indicator stay visible); capture
-      (touch/volume/voice) still works and still saves a real photo while it's shown, even with the
-      shutter button hidden; a right swipe on it slides it back off to the right, restoring the live
-      preview and bringing the shutter button back; the slide visibly follows the finger while
-      dragging rather than only snapping at the end.
+      slides it in from the right edge and settles over the preview; the shutter button and the
+      compact zoom/aspect-ratio controls both disappear (the voice control, gear icon, and capture
+      progress indicator stay visible); capture (touch/volume/voice) still works and still saves a
+      real photo while it's shown, even with the shutter button hidden; a right swipe on it slides
+      it back off to the right, restoring the live preview and bringing the shutter button and
+      compact controls back; the slide visibly follows the finger while dragging rather than only
+      snapping at the end.
+- [ ] **Camera-screen zoom and aspect-ratio controls:** tap through each zoom level (1x-5x) and
+      confirm the live preview visibly zooms immediately, with no rebind flicker; switch between
+      4:3 and 16:9 and confirm the preview box's proportions change (briefly stopping, per the
+      rebind); both selections survive an app restart; both controls sit just above the shutter
+      button without overlapping it on a range of screen sizes.
+- [ ] **Voice control position:** confirm the voice-listening indicator/toggle now sits at the top
+      center of the screen, clearly between the debug bug icon (debug builds only, top-left) and
+      the settings gear icon (top-right), not stacked underneath the gear icon.
 - [ ] **Cover-photo cycling:** with three cover photos configured, repeatedly left-swipe while
       Overlay View is already shown and confirm it advances through all three in order and wraps
       back to the first after the third, without ever hiding the overlay or dispatching a capture;
@@ -1522,3 +1564,31 @@ secure lock screen `wm dismiss-keyguard` can't bypass, so this time verification
 confirming a crash-free `ActivityManager: Start proc` entry and a live `ps` entry for the process
 instead of the usual foreground-focus check. Device verification of the cover-photo swipe/cycle
 gestures themselves (as opposed to just install-and-launch) still has not been performed.
+
+The camera screen's layout was then reworked on request: the voice-trigger control moved from
+stacked underneath the settings gear icon to the top-center of the screen (between the debug
+diagnostics icon and the gear icon), and capture aspect ratio and camera zoom moved off the settings
+screen entirely onto a new compact `CompactCameraControls` row - small segmented buttons with no
+label text, positioned just above the shutter button and hidden along with it while Overlay View is
+shown - rather than the settings screen's old full-width `Slider`/labelled segmented row. Both
+settings are still persisted through the exact same `SettingsRepository` calls as before; only which
+screen owns the write moved, from `SettingsViewModel` to two new `CameraViewModel` methods
+(`onCaptureAspectRatioChanged`/`onZoomLevelChanged`, on `@ApplicationScope` like this screen's other
+writes). Two real issues turned up during this pass, both in `compileDebugKotlin`, not lint or
+tests: `CompactCameraControls` used `Arrangement`/`Modifier.testTag` without importing either -
+straightforward missing imports, fixed immediately. The more interesting one surfaced only once
+`testDebugUnitTest` actually ran: relocating the voice control to top-center made it start
+intercepting `CameraScreenTest`'s existing top-half-tap test, which happened to sample
+`(width / 2f, height * 0.1f)` - exactly where the relocated control's `Card` now sits - so the tap
+never reached the gesture surface underneath it and the test failed with a `null` callback instead
+of `true`. The first fix attempt (nudging X to `width * 0.1f`) traded one collision for another (the
+debug icon, top-start); the real fix was dropping the sampled point to `height * 0.35f` instead,
+clear of the entire top icon/control row regardless of its exact width, mirroring the same
+"off-center to dodge an interactive element" pattern the bottom-half-tap and shutter-button tests
+already used. `testDebugUnitTest` (224/224 tests, 5 new - the two compact controls reflecting their
+current selection and invoking their callbacks, and both being hidden while Overlay View is shown,
+plus `CameraViewModel` exposing `zoomLevel` and persisting a camera-screen-initiated aspect-ratio
+change), `lintDebug` (0 issues), and `assembleDebug` all passed. Device verification of the
+relocated voice control and the new compact controls (confirming neither overlaps the gear/debug
+icons or the shutter button on a real screen, and that both zoom and aspect-ratio changes actually
+apply to the live preview) has not been performed.

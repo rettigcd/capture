@@ -207,10 +207,15 @@ The initial camera screen should include:
 
 * A camera preview centered within the camera screen and constrained to the selected capture aspect ratio, letterboxed or pillarboxed as needed rather than stretched to fill the screen (see "Capture Aspect Ratio and Preview Framing")
 * Capture progress indicator - spinner for Single-Shot Mode, four-step progress for Burst Mode - shown above Overlay View rather than hidden by it (see "Capture Progress Indicator"). No textual capture status ("Capturing…" / "Photo saved" or similar) is shown anywhere on screen.
-* Voice-listening indicator
-* Voice-trigger enable/disable control
+* Voice-listening indicator and voice-trigger enable/disable control, positioned along the top of the
+  screen between the debug diagnostics toggle (top-left, debug builds only - see "Debug Overlay") and
+  the settings gear icon (top-right)
 * Permission and permission-related error messages (capture and file-saving errors are not shown on this screen - see "Error Handling")
 * Optional visible shutter button for accessibility, even though touching the preview also captures (also hidden while Overlay View is shown)
+* Compact camera zoom and capture aspect ratio controls at the bottom of the screen (see "Camera
+  zoom" in "Settings" and "Capture Aspect Ratio and Preview Framing") - sized to take up as little
+  screen space as practical rather than a full-width control, since they sit directly over the live
+  preview, and hidden while Overlay View is shown, matching the shutter button
 * Content descriptions and usable semantics for interactive controls
 * A swipeable cover photo that slides over the camera preview and back off-screen in response to horizontal swipe gestures (see "Cover photo visibility")
 * A gear icon in the top-right corner that opens the settings screen (see "Settings")
@@ -790,23 +795,33 @@ The settings screen lets the user configure:
    volume up, volume down, and voice command (see "Capture Mode").
 4. **Burst interval** - a slider with discrete snap points every 250 ms from 250 ms to 2 seconds,
    defaulting to 500 ms (see "Burst Mode").
-5. **Capture aspect ratio** - a control choosing between 4:3 (default) and 16:9 (see "Capture
-   Aspect Ratio and Preview Framing"). Applies to the visible preview and to both Single-Shot and
-   Burst capture; does not affect the cover photos' size or position at all (see "Overlay
-   sizing"). Changing this setting while a burst is in progress must not alter the active burst -
-   the new ratio takes effect only once that burst finishes. Applying a new ratio may briefly stop
-   and rebind the affected camera use cases; no image may be captured during that rebind.
-6. **Camera zoom** - a slider with five discrete positions, 1x through 5x in integer steps,
-   defaulting to 1x (no zoom). There is a single zoom level, not a per-trigger or per-mode setting
-   the way capture mode is: it applies uniformly to the live preview and to Single-Shot, Burst, and
-   Video Mode capture alike (see "Video Mode"). Unlike capture aspect ratio, changing this setting
-   takes effect immediately on the live camera control without stopping, rebuilding, or rebinding
-   any camera use case, so it incurs none of aspect ratio's rebind delay and needs no
-   burst-in-progress deferral.
 
-Persist all of these settings (eleven distinct persisted values in total, once the six per-trigger
-capture modes are counted individually and the cover-photo list is counted as one), and the
-overlay-visibility state and cover-photo index described above, across app restarts
+**Capture aspect ratio** and **Camera zoom** are configured directly on the camera screen instead of
+here (see "UI requirements" above), as compact controls that sit at the bottom of the live preview
+rather than a settings-screen row, since both are adjusted often enough while framing a shot that
+requiring a trip to the settings screen would be disruptive:
+
+* **Capture aspect ratio** - a control choosing between 4:3 (default) and 16:9 (see "Capture
+  Aspect Ratio and Preview Framing"). Applies to the visible preview and to both Single-Shot and
+  Burst capture; does not affect the cover photos' size or position at all (see "Overlay
+  sizing"). Changing this setting while a burst is in progress must not alter the active burst -
+  the new ratio takes effect only once that burst finishes. Applying a new ratio may briefly stop
+  and rebind the affected camera use cases; no image may be captured during that rebind.
+* **Camera zoom** - five discrete positions, 1x through 5x in integer steps, defaulting to 1x (no
+  zoom). There is a single zoom level, not a per-trigger or per-mode setting the way capture mode
+  is: it applies uniformly to the live preview and to Single-Shot, Burst, and Video Mode capture
+  alike (see "Video Mode"). Unlike capture aspect ratio, changing this setting takes effect
+  immediately on the live camera control without stopping, rebuilding, or rebinding any camera use
+  case, so it incurs none of aspect ratio's rebind delay and needs no burst-in-progress deferral.
+
+Both are still persisted exactly the same way as the settings-screen controls above (see below) -
+moving their control off the settings screen changes nothing about how or where the values
+themselves are stored.
+
+Persist all of these settings (eleven distinct persisted values in total: the four settings-screen
+controls above - once the six per-trigger capture modes are counted individually and the
+cover-photo list is counted as one - plus capture aspect ratio and camera zoom configured on the
+camera screen), and the overlay-visibility state and cover-photo index described above, across app restarts
 (e.g. with Jetpack DataStore). Keep the settings screen testable the same way as the camera screen:
 stateless composables driven by state and callbacks, with the actual persistence mechanism behind
 an interface.
@@ -880,7 +895,8 @@ Write Compose tests verifying:
 * The restored overlay-visibility state (from the last time the app was closed) is reflected correctly on launch
 * No settings-screen control exists for enabling or disabling Overlay View directly
 * The settings screen shows the configured cover photos (as thumbnails, in order), lets the user add one (up to three) and delete any of them, and the Add control is disabled or hidden once three are configured
-* The settings screen reflects and updates each of the five stored settings, including the capture-mode selector, the burst-interval slider, and the capture-aspect-ratio control
+* The settings screen reflects and updates each of its stored settings, including the capture-mode selector and the burst-interval slider
+* The camera screen's compact capture-aspect-ratio and camera-zoom controls reflect the current values, invoke their respective callbacks when changed, and are hidden while Overlay View is shown
 
 The composables must accept state and callbacks so they can be tested without starting a real camera.
 

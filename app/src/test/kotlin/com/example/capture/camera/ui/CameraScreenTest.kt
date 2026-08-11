@@ -4,11 +4,14 @@ import android.app.Application
 import android.content.Context
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
@@ -16,6 +19,7 @@ import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
 import androidx.test.core.app.ApplicationProvider
 import com.example.capture.R
+import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.GestureClassification
 import com.example.capture.camera.domain.GestureDiagnosticEvent
 import com.example.capture.permissions.PermissionStatus
@@ -47,6 +51,8 @@ class CameraScreenTest {
         onVoiceTriggerToggle: (Boolean) -> Unit = {},
         onOverlayVisibilityChanged: (Boolean) -> Unit = {},
         onCoverPhotoCycleRequested: () -> Unit = {},
+        onCaptureAspectRatioChanged: (CaptureAspectRatio) -> Unit = {},
+        onZoomLevelChanged: (Int) -> Unit = {},
         onRequestCameraPermission: () -> Unit = {},
         onOpenSystemSettings: () -> Unit = {},
         onOpenSettings: () -> Unit = {},
@@ -62,6 +68,8 @@ class CameraScreenTest {
                 onVoiceTriggerToggle = onVoiceTriggerToggle,
                 onOverlayVisibilityChanged = onOverlayVisibilityChanged,
                 onCoverPhotoCycleRequested = onCoverPhotoCycleRequested,
+                onCaptureAspectRatioChanged = onCaptureAspectRatioChanged,
+                onZoomLevelChanged = onZoomLevelChanged,
                 onRequestCameraPermission = onRequestCameraPermission,
                 onOpenSystemSettings = onOpenSystemSettings,
                 onOpenSettings = onOpenSettings,
@@ -122,9 +130,14 @@ class CameraScreenTest {
             onScreenTouch = { isTopHalf = it },
         )
 
+        // Well below 10% of screen height: the debug icon, voice-trigger control, and settings
+        // gear icon are all now spread across the very top of the screen (see "UI requirements" in
+        // app-spec.md) and, unlike the gesture surface underneath them, actively consume their own
+        // clicks - no single X offset clears all three, so this drops down to 35% instead (still
+        // comfortably the top half, and clear of that whole row regardless of its exact width).
         composeTestRule.onNodeWithContentDescription(
             context.getString(R.string.camera_preview_content_description),
-        ).performTouchInput { click(position = Offset(width / 2f, height * 0.1f)) }
+        ).performTouchInput { click(position = Offset(width / 2f, height * 0.35f)) }
 
         assertThat(isTopHalf).isTrue()
     }
@@ -396,6 +409,48 @@ class CameraScreenTest {
         ).performTouchInput { swipeLeft() }
 
         assertThat(cycleCount).isEqualTo(0)
+    }
+
+    @Test
+    fun compactAspectRatioControl_reflectsCurrentSelection_andInvokesCallbackWhenChanged() {
+        var selectedRatio: CaptureAspectRatio? = null
+        setScreen(
+            CameraUiState(cameraPermission = PermissionStatus.GRANTED, captureAspectRatio = CaptureAspectRatio.RATIO_4_3),
+            onCaptureAspectRatioChanged = { selectedRatio = it },
+        )
+
+        composeTestRule.onNodeWithTag("camera_aspect_ratio_4_3").assertIsSelected()
+        composeTestRule.onNodeWithTag("camera_aspect_ratio_16_9").assertIsNotSelected().performClick()
+
+        assertThat(selectedRatio).isEqualTo(CaptureAspectRatio.RATIO_16_9)
+    }
+
+    @Test
+    fun compactZoomControl_reflectsCurrentSelection_andInvokesCallbackWhenChanged() {
+        var selectedLevel: Int? = null
+        setScreen(
+            CameraUiState(cameraPermission = PermissionStatus.GRANTED, zoomLevel = 1),
+            onZoomLevelChanged = { selectedLevel = it },
+        )
+
+        composeTestRule.onNodeWithTag("camera_zoom_1x").assertIsSelected()
+        composeTestRule.onNodeWithTag("camera_zoom_3x").assertIsNotSelected().performClick()
+
+        assertThat(selectedLevel).isEqualTo(3)
+    }
+
+    @Test
+    fun compactCameraControls_areHidden_whileOverlayIsShown() {
+        setScreen(
+            CameraUiState(
+                cameraPermission = PermissionStatus.GRANTED,
+                overlayVisible = true,
+                activeCoverPhotoUriString = "content://fake/overlay",
+            ),
+        )
+
+        composeTestRule.onNodeWithTag("camera_aspect_ratio_4_3").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("camera_zoom_1x").assertDoesNotExist()
     }
 
     @Test

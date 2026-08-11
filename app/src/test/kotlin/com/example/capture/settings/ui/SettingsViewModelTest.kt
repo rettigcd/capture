@@ -1,6 +1,5 @@
 package com.example.capture.settings.ui
 
-import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.camera.domain.CaptureTriggerKind
 import com.example.capture.security.domain.KeySessionState
@@ -269,42 +268,6 @@ class SettingsViewModelTest {
         vm.onBurstIntervalChanged(0L)
         advanceUntilIdle()
         assertThat(vm.uiState.value.burstIntervalMillis).isEqualTo(AppSettings.BURST_INTERVAL_RANGE_MILLIS.first)
-
-        collectJob.cancel()
-    }
-
-    @Test
-    fun `changing the zoom level updates state and is clamped to the valid range`() = runTest {
-        val repository = FakeSettingsRepository()
-        val vm = buildViewModel(repository)
-        val collectJob = launch { vm.uiState.collect {} }
-
-        vm.onZoomLevelChanged(3)
-        advanceUntilIdle()
-        assertThat(vm.uiState.value.zoomLevel).isEqualTo(3)
-
-        vm.onZoomLevelChanged(10)
-        advanceUntilIdle()
-        assertThat(vm.uiState.value.zoomLevel).isEqualTo(AppSettings.ZOOM_LEVEL_RANGE.last)
-
-        vm.onZoomLevelChanged(0)
-        advanceUntilIdle()
-        assertThat(vm.uiState.value.zoomLevel).isEqualTo(AppSettings.ZOOM_LEVEL_RANGE.first)
-
-        collectJob.cancel()
-    }
-
-    @Test
-    fun `changing the capture aspect ratio updates state and is persisted`() = runTest {
-        val repository = FakeSettingsRepository()
-        val vm = buildViewModel(repository)
-        val collectJob = launch { vm.uiState.collect {} }
-
-        vm.onCaptureAspectRatioChanged(CaptureAspectRatio.RATIO_16_9)
-        advanceUntilIdle()
-
-        assertThat(vm.uiState.value.captureAspectRatio).isEqualTo(CaptureAspectRatio.RATIO_16_9)
-        assertThat(repository.settings.value.captureAspectRatio).isEqualTo(CaptureAspectRatio.RATIO_16_9)
 
         collectJob.cancel()
     }

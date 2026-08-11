@@ -19,7 +19,6 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
 import com.example.capture.R
-import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.camera.domain.CaptureTriggerKind
 import com.google.common.truth.Truth.assertThat
@@ -46,11 +45,9 @@ class SettingsScreenTest {
         onDeleteCoverPhotoClick: (Int) -> Unit = {},
         onCaptureModeChanged: (CaptureTriggerKind, CaptureMode) -> Unit = { _, _ -> },
         onBurstIntervalChanged: (Long) -> Unit = {},
-        onCaptureAspectRatioChanged: (CaptureAspectRatio) -> Unit = {},
         onDiagnosticsFileLoggingChanged: (Boolean) -> Unit = {},
         onEncryptSavedPhotosChanged: (Boolean) -> Unit = {},
         onChooseEncryptedPhotosFolderClick: () -> Unit = {},
-        onZoomLevelChanged: (Int) -> Unit = {},
         onNavigateToEncryptionKey: () -> Unit = {},
         onBack: () -> Unit = {},
     ) {
@@ -62,11 +59,9 @@ class SettingsScreenTest {
                 onDeleteCoverPhotoClick = onDeleteCoverPhotoClick,
                 onCaptureModeChanged = onCaptureModeChanged,
                 onBurstIntervalChanged = onBurstIntervalChanged,
-                onCaptureAspectRatioChanged = onCaptureAspectRatioChanged,
                 onDiagnosticsFileLoggingChanged = onDiagnosticsFileLoggingChanged,
                 onEncryptSavedPhotosChanged = onEncryptSavedPhotosChanged,
                 onChooseEncryptedPhotosFolderClick = onChooseEncryptedPhotosFolderClick,
-                onZoomLevelChanged = onZoomLevelChanged,
                 onNavigateToEncryptionKey = onNavigateToEncryptionKey,
                 onBack = onBack,
             )
@@ -227,40 +222,6 @@ class SettingsScreenTest {
         composeTestRule
             .onNodeWithText(context.getString(R.string.settings_burst_interval_label, 750L))
             .performScrollTo()
-            .assertIsDisplayed()
-    }
-
-    @Test
-    fun aspectRatioSegmentedButton_reflectsTheCurrentSelection() {
-        setScreen(SettingsUiState(captureAspectRatio = CaptureAspectRatio.RATIO_16_9))
-
-        composeTestRule
-            .onNodeWithText(context.getString(R.string.settings_aspect_ratio_16_9))
-            .performScrollTo()
-            .assertIsDisplayed()
-    }
-
-    @Test
-    fun selecting16x9_invokesCaptureAspectRatioChangedCallback() {
-        var selectedRatio: CaptureAspectRatio? = null
-        setScreen(
-            SettingsUiState(captureAspectRatio = CaptureAspectRatio.RATIO_4_3),
-            onCaptureAspectRatioChanged = { selectedRatio = it },
-        )
-
-        composeTestRule.onNodeWithText(context.getString(R.string.settings_aspect_ratio_16_9))
-            .performScrollTo()
-            .performClick()
-
-        assertThat(selectedRatio).isEqualTo(CaptureAspectRatio.RATIO_16_9)
-    }
-
-    @Test
-    fun zoomLevelLabel_reflectsTheCurrentValue() {
-        setScreen(SettingsUiState(zoomLevel = 4))
-
-        composeTestRule
-            .onNodeWithText(context.getString(R.string.settings_zoom_label, 4))
             .assertIsDisplayed()
     }
 

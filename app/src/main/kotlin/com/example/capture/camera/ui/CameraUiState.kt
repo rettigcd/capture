@@ -3,6 +3,7 @@ package com.example.capture.camera.ui
 import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.permissions.PermissionStatus
+import com.example.capture.settings.domain.AppSettings
 
 /**
  * Immutable snapshot of everything [com.example.capture.camera.ui.CameraScreen] needs to render.
@@ -40,6 +41,12 @@ data class CameraUiState(
      * alter the active burst").
      */
     val captureAspectRatio: CaptureAspectRatio = CaptureAspectRatio.RATIO_4_3,
+    /**
+     * The persisted zoom level (see "Camera zoom" in app-spec.md), 1-5. Unlike
+     * [captureAspectRatio] this is never deferred - it applies live and has no burst-in-progress
+     * concern.
+     */
+    val zoomLevel: Int = AppSettings.DEFAULT_ZOOM_LEVEL,
     /** Drives [CaptureProgressIndicator] - see its kdoc and "Capture Progress Indicator" in app-spec.md. */
     val captureProgress: CaptureProgressUi = CaptureProgressUi.Hidden,
 )

@@ -120,6 +120,8 @@ fun CameraRoute(
         onShutterButtonClick = viewModel::onShutterButtonClick,
         onOverlayVisibilityChanged = viewModel::onOverlayVisibilityChanged,
         onCoverPhotoCycleRequested = viewModel::onCoverPhotoCycleRequested,
+        onCaptureAspectRatioChanged = viewModel::onCaptureAspectRatioChanged,
+        onZoomLevelChanged = viewModel::onZoomLevelChanged,
         onVoiceTriggerToggle = { enabled ->
             viewModel.onVoiceTriggerToggled(enabled)
             val microphoneGranted = ContextCompat.checkSelfPermission(

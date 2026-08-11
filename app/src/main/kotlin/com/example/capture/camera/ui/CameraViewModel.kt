@@ -29,6 +29,7 @@ import com.example.capture.camera.domain.toDiagnosticSource
 import com.example.capture.common.ApplicationScope
 import com.example.capture.permissions.CapturePermissions
 import com.example.capture.permissions.PermissionStatus
+import com.example.capture.settings.domain.AppSettings
 import com.example.capture.settings.domain.SettingsRepository
 import com.example.capture.voice.domain.VoiceCommandRecognizer
 import com.example.capture.voice.domain.VoiceRecognitionError
@@ -162,6 +163,7 @@ class CameraViewModel @Inject constructor(
             coverPhotoCount = coverPhotos.size,
             captureMode = boundCaptureMode,
             captureAspectRatio = captureAspectRatio,
+            zoomLevel = settings.zoomLevel,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), CameraUiState())
 
@@ -437,6 +439,28 @@ class CameraViewModel @Inject constructor(
             val currentIndex = overlayVisibilityRepository.activeCoverPhotoIndex.first()
             overlayVisibilityRepository.setActiveCoverPhotoIndex((currentIndex + 1) % count)
         }
+    }
+
+    /**
+     * Wired up as the camera screen's compact camera-zoom control (see "Camera zoom" in
+     * app-spec.md) - written on [applicationScope] for the same durability reasoning as
+     * [onOverlayVisibilityChanged]. The live application to [zoomController] happens reactively
+     * from the settings-collecting block in [init], the same as a change made from anywhere else.
+     */
+    fun onZoomLevelChanged(level: Int) {
+        val clamped = level.coerceIn(AppSettings.ZOOM_LEVEL_RANGE)
+        applicationScope.launch { settingsRepository.setZoomLevel(clamped) }
+    }
+
+    /**
+     * Wired up as the camera screen's compact capture-aspect-ratio control (see "Capture Aspect
+     * Ratio and Preview Framing" in app-spec.md) - written on [applicationScope] for the same
+     * durability reasoning as [onOverlayVisibilityChanged]. The burst-in-progress deferral into
+     * [effectiveCaptureAspectRatio] happens reactively from the settings-collecting block in
+     * [init], the same as a change made from anywhere else.
+     */
+    fun onCaptureAspectRatioChanged(ratio: CaptureAspectRatio) {
+        applicationScope.launch { settingsRepository.setCaptureAspectRatio(ratio) }
     }
 
     private fun syncVoiceRecognition() {
