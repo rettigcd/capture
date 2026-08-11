@@ -33,7 +33,7 @@ fun SettingsRoute(
         // The Photo Picker's returned Uri already grants persistent read access across app/device
         // restarts on its own, unlike a legacy document-picker Uri, so no
         // ContentResolver.takePersistableUriPermission call is needed here.
-        if (uri != null) viewModel.onImageSelected(uri.toString())
+        if (uri != null) viewModel.onCoverPhotoSelected(uri.toString())
     }
 
     val folderPickerLauncher = rememberLauncherForActivityResult(
@@ -61,11 +61,12 @@ fun SettingsRoute(
     SettingsScreen(
         uiState = uiState,
         onVibrationDurationChanged = viewModel::onVibrationDurationChanged,
-        onPickImageClick = {
+        onAddCoverPhotoClick = {
             pickImageLauncher.launch(
                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
             )
         },
+        onDeleteCoverPhotoClick = viewModel::onCoverPhotoDeleted,
         onCaptureModeChanged = viewModel::onCaptureModeChanged,
         onBurstIntervalChanged = viewModel::onBurstIntervalChanged,
         onCaptureAspectRatioChanged = viewModel::onCaptureAspectRatioChanged,

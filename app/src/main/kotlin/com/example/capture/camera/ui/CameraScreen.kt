@@ -35,8 +35,10 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -81,6 +83,7 @@ fun CameraScreen(
     onShutterButtonClick: () -> Unit,
     onVoiceTriggerToggle: (Boolean) -> Unit,
     onOverlayVisibilityChanged: (Boolean) -> Unit,
+    onCoverPhotoCycleRequested: () -> Unit,
     onRequestCameraPermission: () -> Unit,
     onOpenSystemSettings: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -99,6 +102,7 @@ fun CameraScreen(
                 onShutterButtonClick = onShutterButtonClick,
                 onVoiceTriggerToggle = onVoiceTriggerToggle,
                 onOverlayVisibilityChanged = onOverlayVisibilityChanged,
+                onCoverPhotoCycleRequested = onCoverPhotoCycleRequested,
                 onGestureDiagnosticEvent = onGestureDiagnosticEvent,
                 diagnosticsOverlayEnabled = diagnosticsOverlayEnabled,
                 diagnosticsOverlayInfo = diagnosticsOverlayInfo,
@@ -155,6 +159,7 @@ private fun GrantedCameraContent(
     onShutterButtonClick: () -> Unit,
     onVoiceTriggerToggle: (Boolean) -> Unit,
     onOverlayVisibilityChanged: (Boolean) -> Unit,
+    onCoverPhotoCycleRequested: () -> Unit,
     onGestureDiagnosticEvent: (GestureDiagnosticEvent) -> Unit,
     diagnosticsOverlayEnabled: Boolean,
     diagnosticsOverlayInfo: DiagnosticsOverlayInfo,
@@ -165,6 +170,13 @@ private fun GrantedCameraContent(
         // 0f = fully over the preview (visible); widthPx = fully off the right edge (hidden).
         val offsetX = remember(widthPx) { Animatable(if (uiState.overlayVisible) 0f else widthPx) }
         val coroutineScope = rememberCoroutineScope()
+        // detectTapOrHorizontalSwipe below runs inside .pointerInput(widthPx) { ... }, which only
+        // restarts when widthPx changes - effectively never, since the screen size is fixed. A
+        // plain `uiState` reference captured by onDragEnd's closure would therefore stay frozen at
+        // whatever it was when the gesture detector was first installed, not the live value at the
+        // moment a swipe actually completes. rememberUpdatedState keeps latestUiState current
+        // across recompositions regardless.
+        val latestUiState by rememberUpdatedState(uiState)
 
         // Syncs the on-screen position with the persisted value whenever it changes from
         // something other than a drag settling here - most notably the first emission after the
@@ -202,15 +214,26 @@ private fun GrantedCameraContent(
                                 offsetX.snapTo((offsetX.value + deltaX).coerceIn(0f, widthPx))
                             }
                         },
-                        onDragEnd = {
-                            val shouldShow = offsetX.value < widthPx / 2
-                            coroutineScope.launch {
-                                offsetX.animateTo(
-                                    if (shouldShow) 0f else widthPx,
-                                    animationSpec = tween(durationMillis = OVERLAY_ANIMATION_DURATION_MILLIS),
-                                )
+                        onDragEnd = { draggedLeft ->
+                            // An additional left swipe while Overlay View is already fully shown
+                            // (offsetX sat at 0 for the whole drag, so it's still 0 here) cycles to
+                            // the next cover photo instead of re-committing visibility - see "Cover
+                            // photo visibility" in app-spec.md. With zero or one cover photo
+                            // configured, onCoverPhotoCycleRequested is a no-op and this falls
+                            // through to the ordinary show/hide handling below (harmlessly
+                            // re-committing the same visibility).
+                            if (latestUiState.overlayVisible && draggedLeft && latestUiState.coverPhotoCount > 1) {
+                                onCoverPhotoCycleRequested()
+                            } else {
+                                val shouldShow = offsetX.value < widthPx / 2
+                                coroutineScope.launch {
+                                    offsetX.animateTo(
+                                        if (shouldShow) 0f else widthPx,
+                                        animationSpec = tween(durationMillis = OVERLAY_ANIMATION_DURATION_MILLIS),
+                                    )
+                                }
+                                onOverlayVisibilityChanged(shouldShow)
                             }
-                            onOverlayVisibilityChanged(shouldShow)
                         },
                         overlayVisible = uiState.overlayVisible,
                         cameraAcceptingCaptureRequests = uiState.captureProgress == CaptureProgressUi.Hidden,
@@ -228,10 +251,10 @@ private fun GrantedCameraContent(
             }
         }
 
-        if (uiState.overlayImageUriString != null) {
+        if (uiState.activeCoverPhotoUriString != null) {
             val overlayImageDescription = stringResource(R.string.overlay_image_content_description)
             AsyncImage(
-                model = uiState.overlayImageUriString,
+                model = uiState.activeCoverPhotoUriString,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
@@ -318,7 +341,7 @@ private fun GrantedCameraContent(
 private suspend fun PointerInputScope.detectTapOrHorizontalSwipe(
     onTap: (isTopHalf: Boolean) -> Unit,
     onDrag: (deltaX: Float) -> Unit,
-    onDragEnd: () -> Unit,
+    onDragEnd: (draggedLeft: Boolean) -> Unit,
     overlayVisible: Boolean,
     cameraAcceptingCaptureRequests: Boolean,
     onGestureEvent: (GestureDiagnosticEvent) -> Unit,
@@ -376,7 +399,7 @@ private suspend fun PointerInputScope.detectTapOrHorizontalSwipe(
                     ),
                 )
                 onGestureEvent(GestureDiagnosticEvent.Accepted(nowMillis, classification))
-                if (isDragging) onDragEnd() else onTap(down.position.y < size.height / 2f)
+                if (isDragging) onDragEnd(totalDeltaX < 0) else onTap(down.position.y < size.height / 2f)
                 break
             }
             val delta = change.positionChange()

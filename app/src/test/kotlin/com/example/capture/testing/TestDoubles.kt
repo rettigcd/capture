@@ -233,8 +233,8 @@ class FakeSettingsRepository(initial: AppSettings = AppSettings()) : SettingsRep
         _settings.value = _settings.value.copy(vibrationDurationMillis = durationMillis)
     }
 
-    override suspend fun setOverlayImageUri(uriString: String?) {
-        _settings.value = _settings.value.copy(overlayImageUriString = uriString)
+    override suspend fun setCoverPhotoUriStrings(uriStrings: List<String>) {
+        _settings.value = _settings.value.copy(coverPhotoUriStrings = uriStrings)
     }
 
     override suspend fun setCaptureMode(trigger: CaptureTriggerKind, mode: CaptureMode) {
@@ -323,23 +323,35 @@ class FakeZoomController : ZoomController {
 
 class FakeOverlayImageStore(var failNextPersist: Boolean = false) : OverlayImageStore {
     val persistedSourceUris = mutableListOf<String>()
+    val deletedUris = mutableListOf<String>()
 
     override suspend fun persist(sourceUriString: String): String {
         if (failNextPersist) {
             failNextPersist = false
-            throw IOException("Fake: unable to persist the overlay image")
+            throw IOException("Fake: unable to persist the cover photo")
         }
         persistedSourceUris += sourceUriString
         return "file://fake/persisted/$sourceUriString"
     }
+
+    override suspend fun delete(uriString: String) {
+        deletedUris += uriString
+    }
 }
 
-class FakeOverlayVisibilityRepository(initial: Boolean = false) : OverlayVisibilityRepository {
+class FakeOverlayVisibilityRepository(initial: Boolean = false, initialActiveCoverPhotoIndex: Int = 0) : OverlayVisibilityRepository {
     private val _overlayVisible = MutableStateFlow(initial)
     override val overlayVisible: StateFlow<Boolean> = _overlayVisible.asStateFlow()
 
     override suspend fun setOverlayVisible(visible: Boolean) {
         _overlayVisible.value = visible
+    }
+
+    private val _activeCoverPhotoIndex = MutableStateFlow(initialActiveCoverPhotoIndex)
+    override val activeCoverPhotoIndex: StateFlow<Int> = _activeCoverPhotoIndex.asStateFlow()
+
+    override suspend fun setActiveCoverPhotoIndex(index: Int) {
+        _activeCoverPhotoIndex.value = index
     }
 }
 

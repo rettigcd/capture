@@ -14,7 +14,9 @@ interface SettingsRepository {
     val settings: Flow<AppSettings>
 
     suspend fun setVibrationDurationMillis(durationMillis: Long)
-    suspend fun setOverlayImageUri(uriString: String?)
+
+    /** Replaces the whole cover-photo list at once (see [AppSettings.coverPhotoUriStrings]); callers own append/remove ordering. */
+    suspend fun setCoverPhotoUriStrings(uriStrings: List<String>)
     suspend fun setCaptureMode(trigger: CaptureTriggerKind, mode: CaptureMode)
     suspend fun setBurstIntervalMillis(intervalMillis: Long)
     suspend fun setCaptureAspectRatio(ratio: CaptureAspectRatio)

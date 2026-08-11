@@ -1,7 +1,9 @@
 package com.example.capture.settings.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -10,12 +12,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedIconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -25,6 +31,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
@@ -50,7 +57,8 @@ import kotlin.math.roundToLong
 fun SettingsScreen(
     uiState: SettingsUiState,
     onVibrationDurationChanged: (Long) -> Unit,
-    onPickImageClick: () -> Unit,
+    onAddCoverPhotoClick: () -> Unit,
+    onDeleteCoverPhotoClick: (Int) -> Unit,
     onCaptureModeChanged: (CaptureTriggerKind, CaptureMode) -> Unit,
     onBurstIntervalChanged: (Long) -> Unit,
     onCaptureAspectRatioChanged: (CaptureAspectRatio) -> Unit,
@@ -104,9 +112,10 @@ fun SettingsScreen(
                 onDurationChanged = onVibrationDurationChanged,
             )
             HorizontalDivider()
-            OverlayImageSetting(
-                overlayImageUriString = uiState.overlayImageUriString,
-                onPickImageClick = onPickImageClick,
+            CoverPhotosSetting(
+                coverPhotoUriStrings = uiState.coverPhotoUriStrings,
+                onAddClick = onAddCoverPhotoClick,
+                onDeleteClick = onDeleteCoverPhotoClick,
             )
             HorizontalDivider()
             CaptureModeSection(
@@ -210,27 +219,69 @@ private fun VibrationDurationSetting(durationMillis: Long, onDurationChanged: (L
     }
 }
 
+/**
+ * Up to [AppSettings.MAX_COVER_PHOTOS] cover photos (see "Cover Photos" in app-spec.md), shown as
+ * thumbnails in list order with a per-photo delete control. The Add button is hidden once the cap
+ * is reached, rather than shown disabled, since there's nothing more to explain to the user at
+ * that point.
+ */
 @Composable
-private fun OverlayImageSetting(overlayImageUriString: String?, onPickImageClick: () -> Unit) {
+private fun CoverPhotosSetting(
+    coverPhotoUriStrings: List<String>,
+    onAddClick: () -> Unit,
+    onDeleteClick: (Int) -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(stringResource(R.string.settings_overlay_image_label))
-        if (overlayImageUriString != null) {
-            AsyncImage(
-                model = overlayImageUriString,
-                contentDescription = stringResource(R.string.settings_overlay_image_thumbnail_content_description),
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .size(120.dp)
-                    .clip(RoundedCornerShape(12.dp)),
-            )
-        } else {
+        Text(stringResource(R.string.settings_cover_photos_label))
+        if (coverPhotoUriStrings.isEmpty()) {
             Text(
                 text = stringResource(R.string.settings_no_image_selected),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                coverPhotoUriStrings.forEachIndexed { index, uriString ->
+                    CoverPhotoThumbnail(
+                        uriString = uriString,
+                        onDeleteClick = { onDeleteClick(index) },
+                    )
+                }
+            }
         }
-        Button(onClick = onPickImageClick) {
-            Text(stringResource(R.string.settings_choose_image_button))
+        if (coverPhotoUriStrings.size < AppSettings.MAX_COVER_PHOTOS) {
+            Button(onClick = onAddClick) {
+                Icon(Icons.Filled.Add, contentDescription = null)
+                Text(stringResource(R.string.settings_add_cover_photo_button))
+            }
+        }
+    }
+}
+
+@Composable
+private fun CoverPhotoThumbnail(uriString: String, onDeleteClick: () -> Unit) {
+    Box(modifier = Modifier.size(120.dp)) {
+        AsyncImage(
+            model = uriString,
+            contentDescription = stringResource(R.string.settings_cover_photo_thumbnail_content_description),
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(RoundedCornerShape(12.dp)),
+        )
+        val deleteDescription = stringResource(R.string.settings_delete_cover_photo_content_description)
+        OutlinedIconButton(
+            onClick = onDeleteClick,
+            colors = IconButtonDefaults.outlinedIconButtonColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .size(28.dp)
+                .testTag("delete_cover_photo_$uriString"),
+        ) {
+            Icon(
+                Icons.Filled.Close,
+                contentDescription = deleteDescription,
+                modifier = Modifier.size(16.dp),
+            )
         }
     }
 }

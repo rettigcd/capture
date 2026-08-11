@@ -19,11 +19,12 @@
     <string name="settings_title">Settings</string>
     <string name="back_content_description">Navigate back</string>
     <string name="settings_vibration_duration_label">Vibration duration: %1$d ms</string>
-    <string name="settings_overlay_image_label">Overlay image</string>
-    <string name="settings_choose_image_button">Choose image</string>
-    <string name="settings_no_image_selected">No image selected</string>
-    <string name="settings_overlay_image_thumbnail_content_description">Overlay image</string>
-    <string name="overlay_image_content_description">Overlay image shown over the camera preview. Tap anywhere to take a photo. Swipe right to hide it.</string>
+    <string name="settings_cover_photos_label">Cover photos</string>
+    <string name="settings_add_cover_photo_button">Add cover photo</string>
+    <string name="settings_no_image_selected">No cover photos selected</string>
+    <string name="settings_cover_photo_thumbnail_content_description">Cover photo</string>
+    <string name="settings_delete_cover_photo_content_description">Delete cover photo</string>
+    <string name="overlay_image_content_description">Cover photo shown over the camera preview. Tap anywhere to take a photo. Swipe left to see the next cover photo, or swipe right to hide it.</string>
     <string name="settings_capture_mode_label">Capture mode</string>
     <string name="settings_capture_mode_single_shot">Single</string>
     <string name="settings_capture_mode_burst">Burst</string>

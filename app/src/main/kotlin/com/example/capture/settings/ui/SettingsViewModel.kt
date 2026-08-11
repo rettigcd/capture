@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
 import com.example.capture.camera.domain.CaptureTriggerKind
+import com.example.capture.camera.domain.OverlayVisibilityRepository
 import com.example.capture.common.ApplicationScope
 import com.example.capture.security.domain.KeySessionRepository
 import com.example.capture.settings.domain.AppSettings
@@ -28,6 +29,7 @@ import kotlinx.coroutines.launch
 class SettingsViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val overlayImageStore: OverlayImageStore,
+    private val overlayVisibilityRepository: OverlayVisibilityRepository,
     private val keySessionRepository: KeySessionRepository,
     @ApplicationScope private val applicationScope: CoroutineScope,
 ) : ViewModel() {
@@ -68,21 +70,48 @@ class SettingsViewModel @Inject constructor(
     /**
      * [uriString] is the picker's own `content://` Uri, whose read grant does not reliably
      * survive a restart - see [OverlayImageStore]'s kdoc - so it is copied into durable storage
-     * before being persisted. If the copy fails, the previously-selected image (if any) is left
-     * in place rather than saving an unreadable reference.
+     * before being persisted. If the copy fails, the list is left unchanged rather than saving an
+     * unreadable reference. A no-op once [AppSettings.MAX_COVER_PHOTOS] cover photos are already
+     * configured (the settings screen's Add control is disabled/hidden by then, but this guards
+     * against a stray call reaching here anyway).
      */
-    fun onImageSelected(uriString: String?) {
+    fun onCoverPhotoSelected(uriString: String) {
         applicationScope.launch {
-            if (uriString == null) {
-                settingsRepository.setOverlayImageUri(null)
-                return@launch
-            }
+            val current = settingsRepository.settings.first().coverPhotoUriStrings
+            if (current.size >= AppSettings.MAX_COVER_PHOTOS) return@launch
             val persistedUriString = runCatching { overlayImageStore.persist(uriString) }
-                .onFailure { Log.w(TAG, "Failed to durably persist the overlay image", it) }
+                .onFailure { Log.w(TAG, "Failed to durably persist the cover photo", it) }
                 .getOrNull()
             if (persistedUriString != null) {
-                settingsRepository.setOverlayImageUri(persistedUriString)
+                settingsRepository.setCoverPhotoUriStrings(current + persistedUriString)
             }
+        }
+    }
+
+    /**
+     * Removes the cover photo at [index], shifting every later entry up to fill the gap (see
+     * "Cover Photos" in app-spec.md), then adjusts the persisted active cover-photo index so it
+     * keeps pointing at the same photo it pointed at before the deletion - or clamps to the new
+     * last valid position (0 if the list becomes empty) if that photo was the one removed.
+     * Best-effort deletes the now-unreferenced app-private copy.
+     */
+    fun onCoverPhotoDeleted(index: Int) {
+        applicationScope.launch {
+            val current = settingsRepository.settings.first().coverPhotoUriStrings
+            if (index !in current.indices) return@launch
+            val removedUriString = current[index]
+            val updated = current.toMutableList().apply { removeAt(index) }
+            settingsRepository.setCoverPhotoUriStrings(updated)
+
+            val currentIndex = overlayVisibilityRepository.activeCoverPhotoIndex.first()
+            val newIndex = if (index <= currentIndex) {
+                (currentIndex - 1).coerceIn(0, (updated.size - 1).coerceAtLeast(0))
+            } else {
+                currentIndex
+            }
+            overlayVisibilityRepository.setActiveCoverPhotoIndex(newIndex)
+
+            overlayImageStore.delete(removedUriString)
         }
     }
 
@@ -151,7 +180,7 @@ class SettingsViewModel @Inject constructor(
 
 private fun AppSettings.toUiState(hasKeyFile: Boolean) = SettingsUiState(
     vibrationDurationMillis = vibrationDurationMillis,
-    overlayImageUriString = overlayImageUriString,
+    coverPhotoUriStrings = coverPhotoUriStrings,
     captureModeByTrigger = captureModeByTrigger,
     burstIntervalMillis = burstIntervalMillis,
     captureAspectRatio = captureAspectRatio,

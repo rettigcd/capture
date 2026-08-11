@@ -299,28 +299,86 @@ class CameraViewModelTest {
     }
 
     @Test
-    fun `uiState shows the overlay when it was last left visible and an image is set`() = runTest {
-        val settings = FakeSettingsRepository(AppSettings(overlayImageUriString = "content://fake/pic"))
+    fun `uiState shows the overlay when it was last left visible and a cover photo is configured`() = runTest {
+        val settings = FakeSettingsRepository(AppSettings(coverPhotoUriStrings = listOf("content://fake/pic")))
         val overlayVisibility = FakeOverlayVisibilityRepository(initial = true)
         val vm = buildViewModel(settings = settings, overlayVisibility = overlayVisibility, scheduler = testScheduler)
         val collectJob = launch { vm.uiState.collect {} }
         advanceUntilIdle()
 
         assertThat(vm.uiState.value.overlayVisible).isTrue()
-        assertThat(vm.uiState.value.overlayImageUriString).isEqualTo("content://fake/pic")
+        assertThat(vm.uiState.value.activeCoverPhotoUriString).isEqualTo("content://fake/pic")
+        assertThat(vm.uiState.value.coverPhotoCount).isEqualTo(1)
 
         collectJob.cancel()
     }
 
     @Test
-    fun `uiState falls back to the live preview when overlay was left visible but no image is selected`() = runTest {
-        val settings = FakeSettingsRepository(AppSettings(overlayImageUriString = null))
+    fun `uiState falls back to the live preview when overlay was left visible but no cover photo is configured`() = runTest {
+        val settings = FakeSettingsRepository(AppSettings(coverPhotoUriStrings = emptyList()))
         val overlayVisibility = FakeOverlayVisibilityRepository(initial = true)
         val vm = buildViewModel(settings = settings, overlayVisibility = overlayVisibility, scheduler = testScheduler)
         val collectJob = launch { vm.uiState.collect {} }
         advanceUntilIdle()
 
         assertThat(vm.uiState.value.overlayVisible).isFalse()
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `uiState shows the cover photo at the active index, and clamps it if the index is out of bounds`() = runTest {
+        val settings = FakeSettingsRepository(
+            AppSettings(coverPhotoUriStrings = listOf("content://fake/a", "content://fake/b", "content://fake/c")),
+        )
+        val overlayVisibility = FakeOverlayVisibilityRepository(initial = true, initialActiveCoverPhotoIndex = 1)
+        val vm = buildViewModel(settings = settings, overlayVisibility = overlayVisibility, scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.activeCoverPhotoUriString).isEqualTo("content://fake/b")
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `an additional left swipe cycles to the next cover photo and wraps from the last back to the first`() = runTest {
+        val settings = FakeSettingsRepository(
+            AppSettings(coverPhotoUriStrings = listOf("content://fake/a", "content://fake/b", "content://fake/c")),
+        )
+        val overlayVisibility = FakeOverlayVisibilityRepository(initial = true, initialActiveCoverPhotoIndex = 0)
+        val vm = buildViewModel(settings = settings, overlayVisibility = overlayVisibility, scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+
+        vm.onCoverPhotoCycleRequested()
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.activeCoverPhotoUriString).isEqualTo("content://fake/b")
+
+        vm.onCoverPhotoCycleRequested()
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.activeCoverPhotoUriString).isEqualTo("content://fake/c")
+
+        vm.onCoverPhotoCycleRequested()
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.activeCoverPhotoUriString).isEqualTo("content://fake/a")
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun `cycling with zero or one cover photo configured is a no-op`() = runTest {
+        val settings = FakeSettingsRepository(AppSettings(coverPhotoUriStrings = listOf("content://fake/a")))
+        val overlayVisibility = FakeOverlayVisibilityRepository(initial = true, initialActiveCoverPhotoIndex = 0)
+        val vm = buildViewModel(settings = settings, overlayVisibility = overlayVisibility, scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+
+        vm.onCoverPhotoCycleRequested()
+        advanceUntilIdle()
+
+        assertThat(overlayVisibility.activeCoverPhotoIndex.value).isEqualTo(0)
+        assertThat(vm.uiState.value.activeCoverPhotoUriString).isEqualTo("content://fake/a")
 
         collectJob.cancel()
     }
@@ -523,7 +581,7 @@ class CameraViewModelTest {
 
     @Test
     fun `flash and torch are disabled when the overlay becomes visible`() = runTest {
-        val settings = FakeSettingsRepository(AppSettings(overlayImageUriString = "content://fake/pic"))
+        val settings = FakeSettingsRepository(AppSettings(coverPhotoUriStrings = listOf("content://fake/pic")))
         val overlayVisibility = FakeOverlayVisibilityRepository(initial = false)
         val flashTorch = FakeFlashTorchController()
         val vm = buildViewModel(

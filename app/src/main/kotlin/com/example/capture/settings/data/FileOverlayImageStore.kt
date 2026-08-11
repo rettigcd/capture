@@ -9,11 +9,13 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
+import java.util.UUID
 import javax.inject.Inject
 
 /**
- * Copies the picked image into a single, fixed app-private file (each new selection overwrites
- * the previous one, so nothing accumulates) and hands back a `file://` Uri, which Coil loads
+ * Copies each picked image into its own app-private file (a random filename per call, since up to
+ * [com.example.capture.settings.domain.AppSettings.MAX_COVER_PHOTOS] copies can coexist - unlike
+ * the single fixed file this used to overwrite) and hands back a `file://` Uri, which Coil loads
  * directly with no extra permission of any kind - unlike the picker's own `content://` Uri, whose
  * read grant does not reliably survive a process restart (see [OverlayImageStore]'s kdoc).
  */
@@ -23,7 +25,7 @@ class FileOverlayImageStore @Inject constructor(
 ) : OverlayImageStore {
 
     override suspend fun persist(sourceUriString: String): String = withContext(dispatcherProvider.io) {
-        val destination = File(context.filesDir, OVERLAY_IMAGE_FILE_NAME)
+        val destination = File(context.filesDir, "$COVER_PHOTO_FILE_PREFIX${UUID.randomUUID()}")
         val input = context.contentResolver.openInputStream(sourceUriString.toUri())
             ?: throw IOException("Could not open the selected image for reading")
         input.use { stream ->
@@ -32,7 +34,13 @@ class FileOverlayImageStore @Inject constructor(
         Uri.fromFile(destination).toString()
     }
 
+    override suspend fun delete(uriString: String) {
+        withContext(dispatcherProvider.io) {
+            runCatching { uriString.toUri().path?.let { File(it).delete() } }
+        }
+    }
+
     private companion object {
-        const val OVERLAY_IMAGE_FILE_NAME = "overlay_image"
+        const val COVER_PHOTO_FILE_PREFIX = "cover_photo_"
     }
 }

@@ -46,6 +46,7 @@ class CameraScreenTest {
         onShutterButtonClick: () -> Unit = {},
         onVoiceTriggerToggle: (Boolean) -> Unit = {},
         onOverlayVisibilityChanged: (Boolean) -> Unit = {},
+        onCoverPhotoCycleRequested: () -> Unit = {},
         onRequestCameraPermission: () -> Unit = {},
         onOpenSystemSettings: () -> Unit = {},
         onOpenSettings: () -> Unit = {},
@@ -60,6 +61,7 @@ class CameraScreenTest {
                 onShutterButtonClick = onShutterButtonClick,
                 onVoiceTriggerToggle = onVoiceTriggerToggle,
                 onOverlayVisibilityChanged = onOverlayVisibilityChanged,
+                onCoverPhotoCycleRequested = onCoverPhotoCycleRequested,
                 onRequestCameraPermission = onRequestCameraPermission,
                 onOpenSystemSettings = onOpenSystemSettings,
                 onOpenSettings = onOpenSettings,
@@ -217,7 +219,7 @@ class CameraScreenTest {
             CameraUiState(
                 cameraPermission = PermissionStatus.GRANTED,
                 overlayVisible = true,
-                overlayImageUriString = "content://fake/overlay",
+                activeCoverPhotoUriString = "content://fake/overlay",
                 captureProgress = CaptureProgressUi.Determinate(completedSteps = 1, totalSteps = 4),
             ),
         )
@@ -249,7 +251,7 @@ class CameraScreenTest {
             CameraUiState(
                 cameraPermission = PermissionStatus.GRANTED,
                 overlayVisible = true,
-                overlayImageUriString = "content://fake/overlay",
+                activeCoverPhotoUriString = "content://fake/overlay",
             ),
             onScreenTouch = { touchCount++ },
         )
@@ -268,7 +270,7 @@ class CameraScreenTest {
             CameraUiState(
                 cameraPermission = PermissionStatus.GRANTED,
                 overlayVisible = true,
-                overlayImageUriString = "content://fake/overlay",
+                activeCoverPhotoUriString = "content://fake/overlay",
             ),
         )
 
@@ -285,7 +287,7 @@ class CameraScreenTest {
             CameraUiState(
                 cameraPermission = PermissionStatus.GRANTED,
                 overlayVisible = false,
-                overlayImageUriString = "content://fake/overlay",
+                activeCoverPhotoUriString = "content://fake/overlay",
             ),
         )
 
@@ -300,7 +302,7 @@ class CameraScreenTest {
             CameraUiState(
                 cameraPermission = PermissionStatus.GRANTED,
                 overlayVisible = false,
-                overlayImageUriString = null,
+                activeCoverPhotoUriString = null,
             ),
         )
 
@@ -317,7 +319,7 @@ class CameraScreenTest {
             CameraUiState(
                 cameraPermission = PermissionStatus.GRANTED,
                 overlayVisible = false,
-                overlayImageUriString = "content://fake/overlay",
+                activeCoverPhotoUriString = "content://fake/overlay",
             ),
             onScreenTouch = { touchCount++ },
             onOverlayVisibilityChanged = { committedVisible = it },
@@ -339,7 +341,7 @@ class CameraScreenTest {
             CameraUiState(
                 cameraPermission = PermissionStatus.GRANTED,
                 overlayVisible = true,
-                overlayImageUriString = "content://fake/overlay",
+                activeCoverPhotoUriString = "content://fake/overlay",
             ),
             onScreenTouch = { touchCount++ },
             onOverlayVisibilityChanged = { committedVisible = it },
@@ -351,6 +353,49 @@ class CameraScreenTest {
 
         assertThat(committedVisible).isFalse()
         assertThat(touchCount).isEqualTo(0)
+    }
+
+    @Test
+    fun leftSwipeOnTheOverlay_withMultipleCoverPhotos_cyclesInsteadOfChangingVisibility() {
+        var cycleCount = 0
+        var visibilityCommits = 0
+        setScreen(
+            CameraUiState(
+                cameraPermission = PermissionStatus.GRANTED,
+                overlayVisible = true,
+                activeCoverPhotoUriString = "content://fake/overlay",
+                coverPhotoCount = 2,
+            ),
+            onCoverPhotoCycleRequested = { cycleCount++ },
+            onOverlayVisibilityChanged = { visibilityCommits++ },
+        )
+
+        composeTestRule.onNodeWithContentDescription(
+            context.getString(R.string.overlay_image_content_description),
+        ).performTouchInput { swipeLeft() }
+
+        assertThat(cycleCount).isEqualTo(1)
+        assertThat(visibilityCommits).isEqualTo(0)
+    }
+
+    @Test
+    fun leftSwipeOnTheOverlay_withOnlyOneCoverPhoto_doesNotCycle() {
+        var cycleCount = 0
+        setScreen(
+            CameraUiState(
+                cameraPermission = PermissionStatus.GRANTED,
+                overlayVisible = true,
+                activeCoverPhotoUriString = "content://fake/overlay",
+                coverPhotoCount = 1,
+            ),
+            onCoverPhotoCycleRequested = { cycleCount++ },
+        )
+
+        composeTestRule.onNodeWithContentDescription(
+            context.getString(R.string.overlay_image_content_description),
+        ).performTouchInput { swipeLeft() }
+
+        assertThat(cycleCount).isEqualTo(0)
     }
 
     @Test
@@ -379,7 +424,7 @@ class CameraScreenTest {
             CameraUiState(
                 cameraPermission = PermissionStatus.GRANTED,
                 overlayVisible = false,
-                overlayImageUriString = "content://fake/overlay",
+                activeCoverPhotoUriString = "content://fake/overlay",
             ),
             onGestureDiagnosticEvent = { events += it },
         )

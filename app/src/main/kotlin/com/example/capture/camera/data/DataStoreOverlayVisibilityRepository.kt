@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.capture.camera.domain.OverlayVisibilityRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -25,6 +26,7 @@ class DataStoreOverlayVisibilityRepository @Inject constructor(
 
     private object Keys {
         val OVERLAY_VISIBLE = booleanPreferencesKey("overlay_visible")
+        val ACTIVE_COVER_PHOTO_INDEX = intPreferencesKey("active_cover_photo_index")
     }
 
     override val overlayVisible: Flow<Boolean> = context.cameraUiDataStore.data.map { preferences ->
@@ -33,5 +35,13 @@ class DataStoreOverlayVisibilityRepository @Inject constructor(
 
     override suspend fun setOverlayVisible(visible: Boolean) {
         context.cameraUiDataStore.edit { it[Keys.OVERLAY_VISIBLE] = visible }
+    }
+
+    override val activeCoverPhotoIndex: Flow<Int> = context.cameraUiDataStore.data.map { preferences ->
+        preferences[Keys.ACTIVE_COVER_PHOTO_INDEX] ?: 0
+    }
+
+    override suspend fun setActiveCoverPhotoIndex(index: Int) {
+        context.cameraUiDataStore.edit { it[Keys.ACTIVE_COVER_PHOTO_INDEX] = index }
     }
 }

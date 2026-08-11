@@ -7,7 +7,12 @@ import com.example.capture.camera.domain.CaptureTriggerKind
 /** Immutable snapshot of every user-configurable setting, persisted across app restarts. */
 data class AppSettings(
     val vibrationDurationMillis: Long = DEFAULT_VIBRATION_DURATION_MILLIS,
-    val overlayImageUriString: String? = null,
+    /**
+     * Up to [MAX_COVER_PHOTOS] cover photos (see "Cover photo visibility" in app-spec.md), in
+     * display order - a newly added one is appended to the end; deleting one shifts every later
+     * entry up so the list never has gaps. Empty by default (no cover photos configured).
+     */
+    val coverPhotoUriStrings: List<String> = emptyList(),
     /**
      * Each of the six trigger kinds (see "Capture Mode" in app-spec.md) has its own independent
      * Single-Shot/Burst choice - defaults to [CaptureMode.SINGLE_SHOT] for every kind, matching
@@ -46,6 +51,9 @@ data class AppSettings(
 ) {
     companion object {
         const val DEFAULT_VIBRATION_DURATION_MILLIS = 60L
+
+        /** The cover-photo list (see "Cover Photos" in app-spec.md) never grows past this many entries. */
+        const val MAX_COVER_PHOTOS = 3
 
         /** The slider on the settings screen snaps to these 60 ms increments. */
         val VIBRATION_DURATION_RANGE_MILLIS = 60L..300L

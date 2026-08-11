@@ -28,7 +28,7 @@ class DataStoreSettingsRepository @Inject constructor(
 
     private object Keys {
         val VIBRATION_DURATION_MILLIS = longPreferencesKey("vibration_duration_millis")
-        val OVERLAY_IMAGE_URI = stringPreferencesKey("overlay_image_uri")
+        val COVER_PHOTO_URIS = stringPreferencesKey("cover_photo_uris")
         val BURST_INTERVAL_MILLIS = longPreferencesKey("burst_interval_millis")
         val CAPTURE_ASPECT_RATIO = stringPreferencesKey("capture_aspect_ratio")
         val DIAGNOSTICS_FILE_LOGGING_ENABLED = booleanPreferencesKey("diagnostics_file_logging_enabled")
@@ -46,7 +46,10 @@ class DataStoreSettingsRepository @Inject constructor(
         AppSettings(
             vibrationDurationMillis = preferences[Keys.VIBRATION_DURATION_MILLIS]
                 ?: AppSettings.DEFAULT_VIBRATION_DURATION_MILLIS,
-            overlayImageUriString = preferences[Keys.OVERLAY_IMAGE_URI],
+            coverPhotoUriStrings = preferences[Keys.COVER_PHOTO_URIS]
+                ?.split(COVER_PHOTO_URI_SEPARATOR)
+                ?.filter { it.isNotEmpty() }
+                ?: emptyList(),
             captureModeByTrigger = CaptureTriggerKind.entries.associateWith { trigger ->
                 preferences[Keys.captureMode(trigger)]?.toCaptureModeOrDefault() ?: CaptureMode.SINGLE_SHOT
             },
@@ -65,14 +68,8 @@ class DataStoreSettingsRepository @Inject constructor(
         context.settingsDataStore.edit { it[Keys.VIBRATION_DURATION_MILLIS] = durationMillis }
     }
 
-    override suspend fun setOverlayImageUri(uriString: String?) {
-        context.settingsDataStore.edit { preferences ->
-            if (uriString != null) {
-                preferences[Keys.OVERLAY_IMAGE_URI] = uriString
-            } else {
-                preferences.remove(Keys.OVERLAY_IMAGE_URI)
-            }
-        }
+    override suspend fun setCoverPhotoUriStrings(uriStrings: List<String>) {
+        context.settingsDataStore.edit { it[Keys.COVER_PHOTO_URIS] = uriStrings.joinToString(COVER_PHOTO_URI_SEPARATOR) }
     }
 
     override suspend fun setCaptureMode(trigger: CaptureTriggerKind, mode: CaptureMode) {
@@ -116,4 +113,10 @@ class DataStoreSettingsRepository @Inject constructor(
 
     private fun String.toCaptureAspectRatioOrDefault(): CaptureAspectRatio =
         CaptureAspectRatio.entries.firstOrNull { it.name == this } ?: CaptureAspectRatio.RATIO_4_3
+
+    private companion object {
+        // A newline can't appear in a persisted cover-photo Uri (a `file://` path), so it's a safe
+        // separator for storing the ordered list as one DataStore string preference.
+        const val COVER_PHOTO_URI_SEPARATOR = "\n"
+    }
 }

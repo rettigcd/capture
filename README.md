@@ -211,7 +211,7 @@ verification"), rather than only guessing at current versions:
 | Robolectric | 4.16.1 | Latest stable (non-beta); used only for `CameraScreenTest`/`SettingsScreenTest` so Compose UI tests run on the JVM (`testDebugUnitTest`) without an emulator. |
 | Navigation Compose | 2.9.8 | Latest stable; backs the "camera" / "settings" `NavHost` in `CaptureApp.kt`. |
 | DataStore Preferences | 1.2.1 | Latest stable; backs `DataStoreSettingsRepository`. |
-| Coil (`coil-compose`) | 3.5.0 | Latest stable. Coil 3's package is `coil3.compose`, not `coil.compose` (Coil 2's) - loads the overlay image and the settings-screen thumbnail from a `content://`/`file://` URI; no extra network module needed since both are local URIs. |
+| Coil (`coil-compose`) | 3.5.0 | Latest stable. Coil 3's package is `coil3.compose`, not `coil.compose` (Coil 2's) - loads the active cover photo and each settings-screen thumbnail from a `content://`/`file://` URI; no extra network module needed since both are local URIs. |
 | AndroidX ExifInterface | 1.3.7 | Latest stable; reads the EXIF orientation of a just-saved photo for the diagnostic metadata log (see "Capture aspect ratio and preview framing") - `BitmapFactory` alone gives dimensions but not orientation. |
 | AndroidX Lifecycle Process | matches the `lifecycle` line | `ProcessLifecycleOwner` (app-wide foreground/background observation, used by the encryption feature's auto-lock) lives in this separate `androidx.lifecycle:lifecycle-process` artifact, not `lifecycle-runtime-ktx` - easy to miss since the class is under the same `androidx.lifecycle` package. |
 | `compileSdk`/`targetSdk` | 37 | The newer AndroidX releases above (`core-ktx` 1.19.0, `lifecycle` 2.11.0, `hilt-navigation-compose` 1.4.0) require compiling against API 37+; `compileSdk = 36` fails `checkDebugAarMetadata` with these versions. |
@@ -262,61 +262,74 @@ its `init` block) rather than as a derived property of `uiState`, specifically s
 once per completed Single-Shot capture (or once per triggered burst) instead of repeating for as
 long as the status happens to still read "saved." A failed Single-Shot capture does not vibrate.
 
-## Overlay image visibility
+## Cover photo visibility
 
-The camera screen has two modes - **Camera Preview** (just the live preview) and **Overlay View**
-(the live preview with the user-selected overlay image drawn on top of it, covering the same
-space) - switched with a horizontal swipe on the camera screen itself, not a settings-screen
-control:
+The user configures up to three **cover photos** on the settings screen (see "Cover Photos" in
+"Settings" below). The camera screen has two modes built on that list - **Camera Preview** (just
+the live preview) and **Overlay View** (the live preview with the *active* cover photo - the one at
+the current cover-photo index - drawn on top of it, covering the same space) - switched, and cycled
+between, with horizontal swipes on the camera screen itself, not a settings-screen control:
 
-* A **left swipe** while Camera Preview is showing slides the overlay image in from the right edge
-  until it settles over the preview (Overlay View).
-* A **right swipe** while Overlay View is showing slides the overlay image back off the right edge
-  (Camera Preview).
+* A **left swipe** while Camera Preview is showing slides the active cover photo in from the right
+  edge until it settles over the preview (Overlay View).
+* An additional **left swipe** while Overlay View is already showing advances to the next cover
+  photo (wrapping from the last back to the first) instead of re-committing visibility, when more
+  than one cover photo is configured - a no-op with zero or one.
+* A **right swipe** while Overlay View is showing slides the active cover photo back off the right
+  edge (Camera Preview) without changing which one is active.
 * The slide follows the finger while dragging and animates to whichever side it's closer to on
   release, rather than only snapping after the gesture completes.
 
 This is implemented in `GrantedCameraContent` in `CameraScreen.kt` as a single custom pointer-input
 gesture detector (`detectTapOrHorizontalSwipe`, built on `awaitEachGesture`) attached to the
-always-full-screen preview layer underneath the overlay image. One detector - rather than Compose's
+always-full-screen preview layer underneath the cover photo. One detector - rather than Compose's
 built-in `detectTapGestures` and `detectDragGestures` layered separately - disambiguates a tap
 (capture) from a horizontal drag (swipe) for the same touch: movement past touch slop in *any*
 direction is treated as a drag (cancelling the tap, matching plain tap-gesture semantics), while
-only the horizontal component drives an `Animatable<Float>` offset that positions the overlay
-image via `Modifier.offset { IntOffset(...) }`. The overlay image itself never installs its own
-pointer input, so touches over it fall through to the same detector underneath regardless of
-where the slide currently sits.
+only the horizontal component drives an `Animatable<Float>` offset that positions the cover photo
+via `Modifier.offset { IntOffset(...) }`. `detectTapOrHorizontalSwipe`'s `onDragEnd` callback also
+reports which direction the drag ended in (`draggedLeft: Boolean`, from the sign of the
+gesture's total horizontal delta); `GrantedCameraContent` uses that, together with
+`uiState.overlayVisible` and `uiState.coverPhotoCount`, to tell "reveal the overlay" apart from
+"cycle within it" - the offset itself stays pinned at 0 for the whole gesture in the cycling case
+(it was already fully shown), so there's nothing extra to animate. The cover photo itself never
+installs its own pointer input, so touches over it fall through to the same detector underneath
+regardless of where the slide currently sits.
 
-**Capture keeps working while the overlay is shown.** `CameraScreen` always composes the CameraX
-preview underneath the overlay image - the image is drawn on top of it, not instead of it - so
+**Capture keeps working while a cover photo is shown.** `CameraScreen` always composes the CameraX
+preview underneath the cover photo - the image is drawn on top of it, not instead of it - so
 CameraX stays bound and touch/volume/voice capture behave identically either way. This is what
-makes the overlay useful as a discreet display mode rather than only a cosmetic one. Volume-button
-capture is gated on the *camera* screen being the active `NavHost` destination (`MainActivity`
-checks `navController.currentDestination?.route`), so it correctly stops working - and volume keys
+makes it useful as a discreet display mode rather than only a cosmetic one. Volume-button capture
+is gated on the *camera* screen being the active `NavHost` destination (`MainActivity` checks
+`navController.currentDestination?.route`), so it correctly stops working - and volume keys
 correctly resume adjusting media volume - while the settings screen is open instead.
 
-**The capture-status indicator and shutter button are hidden while the overlay is shown**, not
+**The capture-status indicator and shutter button are hidden while a cover photo is shown**, not
 just covered by it - `GrantedCameraContent` conditionally composes both only when
-`!uiState.overlayVisible`, since they'd otherwise visually sit on top of the overlay image instead
-of appearing hidden underneath it. The voice-trigger control and the settings gear icon are
-unaffected and stay visible either way. Tapping the overlay image still captures a photo even with
-the shutter button hidden.
+`!uiState.overlayVisible`, since they'd otherwise visually sit on top of the cover photo instead of
+appearing hidden underneath it. The voice-trigger control and the settings gear icon are unaffected
+and stay visible either way. Tapping the cover photo still captures a photo even with the shutter
+button hidden.
 
-**Overlay visibility never blanks the screen.** If it was last left visible but no image has ever
-been picked, `CameraViewModel` falls back to showing the live preview (`overlayVisible` is derived
-as `persistedVisible && overlayImageUriString != null`, not the raw persisted value) rather than an
-empty placeholder.
+**Overlay visibility never blanks the screen.** If it was last left visible but no cover photo has
+ever been configured, `CameraViewModel` falls back to showing the live preview (`overlayVisible` is
+derived as `persistedVisible && coverPhotos.isNotEmpty()`, not the raw persisted value) rather than
+an empty placeholder.
 
-**Visibility is persisted, but deliberately not as a "setting."** `camera/domain
-/OverlayVisibilityRepository.kt`, implemented by `camera/data
-/DataStoreOverlayVisibilityRepository.kt`, persists the last swipe-committed visibility in its own
-DataStore Preferences file (`camera_ui_state`, separate from `settings`'s own DataStore file) so it
-survives app restarts the same way a setting would - restoring whichever mode was showing when the
-app was last closed - while staying conceptually separate from `SettingsRepository`: there is no
-settings-screen control for it at all (`SettingsScreenTest.noOverlayVisibilityControlExists_...`
-asserts the settings screen has zero toggleable nodes). `CameraViewModel.onOverlayVisibilityChanged`
-writes on the injected `@ApplicationScope` `CoroutineScope`, for the same durability reasoning
-described below for settings writes.
+**Visibility and the active index are persisted, but deliberately not as "settings."**
+`camera/domain/OverlayVisibilityRepository.kt`, implemented by `camera/data
+/DataStoreOverlayVisibilityRepository.kt`, persists both the last swipe-committed visibility *and*
+the last swipe-cycled cover-photo index in its own DataStore Preferences file (`camera_ui_state`,
+separate from `settings`'s own DataStore file) so both survive app restarts the same way a setting
+would - restoring whichever mode and cover photo were showing when the app was last closed - while
+staying conceptually separate from `SettingsRepository`, which only owns *which images exist* in
+the cover-photo list, not which one is active or whether Overlay View is currently shown: there is
+no settings-screen control for either at all (`SettingsScreenTest.noOverlayVisibilityControlExists_...`
+asserts the settings screen has zero toggleable nodes beyond "Encrypt saved photos" and diagnostics
+logging). `CameraViewModel.onOverlayVisibilityChanged`/`onCoverPhotoCycleRequested` both write on
+the injected `@ApplicationScope` `CoroutineScope`, for the same durability reasoning described below
+for settings writes. Deleting a cover photo on the settings screen can also adjust the persisted
+index - see "Cover Photos" in "Settings" below.
 
 ## Capture aspect ratio and preview framing
 
@@ -325,7 +338,7 @@ The camera preview is centered on screen and constrained to the selected capture
 filled with the theme's background color. Since the app is locked to portrait only (see
 "Portrait-only orientation" below), typical phone screens are taller/narrower than either ratio's
 portrait mapping (3:4 or 9:16), so in practice this always means letterboxing (bars above/below),
-not pillarboxing. The overlay image (see "Overlay image visibility" above) is a full-screen
+not pillarboxing. The active cover photo (see "Cover photo visibility" above) is a full-screen
 sibling of the preview, entirely unaffected by this - swipe gestures and tap-to-capture are still
 recognized across the *whole* screen, not just the smaller preview area, since the gesture
 detector sits on the outer full-screen layer, not the aspect-ratio-constrained box.
@@ -435,13 +448,14 @@ a `remember(captureMode)`) and rebinds it to the camera (`LaunchedEffect(lifecyc
 captureMode)`) - a brief preview flicker on mode switch is an accepted trade-off for an infrequent,
 deliberate settings change, unlike the rotation case above which specifically avoids any rebind.
 
-**Flash and torch are actively disabled during Burst Mode or while the overlay is visible.**
+**Flash and torch are actively disabled during Burst Mode or while a cover photo is visible.**
 There's no user-facing control that turns either on yet, but `camera/domain/FlashTorchController.kt`
 (implemented by `camera/data/CameraXFlashTorchController.kt`, using `ImageCapture.flashMode` and
 `CameraControl.enableTorch`) exists so that constraint is explicit and enforced now rather than
-merely assumed. `CameraViewModel` collects `captureMode == BURST || overlayVisible` and calls
-`disableFlashAndTorch()` every time that becomes `true`, regardless of whatever state flash/torch
-were previously in.
+merely assumed. `CameraViewModel` collects a burst-active flag from the raw `CaptureCoordinator.state`
+together with `overlayVisibilityRepository.overlayVisible` and whether the cover-photo list is
+non-empty, and calls `disableFlashAndTorch()` every time that combination becomes `true`, regardless
+of whatever state flash/torch were previously in.
 
 ## Video Mode
 
@@ -585,9 +599,13 @@ restarts):
 1. **Vibration duration** - a `Slider` snapped to 60 ms increments from 60-300 ms
    (`AppSettings.VIBRATION_DURATION_RANGE_MILLIS`), used for the capture-success pulse described
    above.
-2. **Overlay image selection** - a "Choose image" button that launches the system Photo Picker
-   (`ActivityResultContracts.PickVisualMedia`, hosted in `settings/ui/SettingsRoute.kt`). Like the
-   camera permission model, this needs no runtime storage/media permission at all.
+2. **Cover Photos** - up to three cover photos, shown as thumbnails in list order, each with its
+   own delete control; an "Add cover photo" button (hidden once three are configured) launches the
+   system Photo Picker (`ActivityResultContracts.PickVisualMedia`, hosted in
+   `settings/ui/SettingsRoute.kt`) and appends the result to the end of the list. Like the camera
+   permission model, this needs no runtime storage/media permission at all. Deleting a cover photo
+   shifts every later entry up to fill the gap and, if needed, adjusts the persisted active
+   cover-photo index (see "Cover photo visibility" above) so it never points out of bounds.
 3. **Capture mode, per trigger** - six independent `SingleChoiceSegmentedButtonRow` controls, one
    per capture trigger, each choosing between Single-Shot, Burst, and Video (see "Capture Mode and
    Burst Mode" and "Video Mode" above).
@@ -606,12 +624,14 @@ Uris - but that turned out to be wrong on at least one real device/OS version: r
 after a restart and trying to load a Uri DataStore had correctly remembered failed with
 `SecurityException: ... does not have permission to access picker uri ...`. The picker's read
 grant for that specific item simply didn't survive the process restart. `SettingsViewModel
-.onImageSelected` now copies the picked image's bytes into app-private storage immediately (via
+.onCoverPhotoSelected` now copies the picked image's bytes into app-private storage immediately (via
 `settings/domain/OverlayImageStore.kt`, implemented by `settings/data/FileOverlayImageStore.kt`,
-which overwrites a single fixed file each time so nothing accumulates) and persists a `file://` Uri
-to that private copy instead - Coil loads a `file://` Uri directly with no permission dependency of
-any kind. If the copy fails, the previously-selected image (if any) is left in place rather than
-persisting a reference that can't be read back.
+which writes each cover photo to its own randomly-named file - `cover_photo_<UUID>` - since up to
+three can coexist now, unlike the single fixed file this used to overwrite) and appends a `file://`
+Uri to that private copy to the end of the persisted list - Coil loads a `file://` Uri directly with
+no permission dependency of any kind. If the copy fails, the list is left unchanged rather than
+persisting a reference that can't be read back. Deleting a cover photo calls
+`OverlayImageStore.delete` to best-effort remove its now-unreferenced file.
 
 **Writes happen on `@ApplicationScope`, not `viewModelScope`.** `SettingsViewModel` is scoped to
 the "settings" `NavHost` destination's back-stack entry, which is popped - cancelling
@@ -619,10 +639,10 @@ the "settings" `NavHost` destination's back-stack entry, which is popped - cance
 common flow immediately after picking an image (pick it, see the thumbnail update, tap back), and
 a DataStore write still in flight on `viewModelScope` at that moment could be cancelled before it
 durably reached disk, so a freshly-picked image could silently fail to survive an app restart.
-`onVibrationDurationChanged`/`onImageSelected`/`onCaptureModeChanged`/`onBurstIntervalChanged`/
+`onVibrationDurationChanged`/`onCoverPhotoSelected`/`onCoverPhotoDeleted`/`onCaptureModeChanged`/`onBurstIntervalChanged`/
 `onCaptureAspectRatioChanged`/`onDiagnosticsFileLoggingChanged` all launch on the injected `@ApplicationScope` `CoroutineScope` instead (the same one `CameraViewModel`
 already uses to release the voice recognizer after `onCleared()`, and to persist overlay
-visibility - see above), which outlives the settings screen. `SettingsViewModelTest`'s `"a selection write survives the view model being
+visibility/the active cover-photo index - see above), which outlives the settings screen. `SettingsViewModelTest`'s `"a selection write survives the view model being
 cleared right afterward"` case reproduces this with a real `ViewModelStore` to guard against a
 regression.
 
@@ -703,7 +723,7 @@ offline/continuous keyword-spotting engine:
   vocabulary; it is not written to logs, disk, or a network call anywhere in this codebase.
 - Photos are saved through `MediaStore` into the user's own `Pictures/Capture` folder - visible
   and manageable like any other gallery photo, not hidden app-private storage.
-- The overlay image is chosen via the system Photo Picker, which grants access only to the one
+- Each cover photo is chosen via the system Photo Picker, which grants access only to the specific
   image the user explicitly picks - the app never gets broad gallery access, and nothing about the
   picker interaction is logged.
 
@@ -808,19 +828,29 @@ since none of it is fully covered by automated tests:
       the camera screen with its state (voice toggle) intact.
 - [ ] **Vibration duration setting:** moving the slider changes the felt pulse length on the next
       capture; the value survives an app restart.
-- [ ] **Overlay swipe gestures:** with an image selected, a left swipe on the live preview slides
-      the overlay image in from the right edge and settles over the preview; the shutter button
-      disappears (the voice control, gear icon, and capture progress indicator stay visible);
-      capture (touch/volume/voice) still works and still saves a real photo while the overlay is
-      shown, even with the shutter button hidden; a right swipe on the overlay slides it back off
-      to the right, restoring the live preview and bringing the shutter button back; the slide
-      visibly follows the finger while dragging rather than only snapping at the end.
-- [ ] **Overlay-visibility persistence:** leave the overlay showing (or hidden) and fully close the
-      app, then relaunch it - the same mode is restored automatically, with no settings-screen
-      control for it anywhere.
-- [ ] **Image selection:** "Choose image" opens the system Photo Picker; picking an image updates
-      the thumbnail on the settings screen and the overlay image on the camera screen; the
-      selection survives an app restart without needing to re-pick.
+- [ ] **Overlay swipe gestures:** with a cover photo configured, a left swipe on the live preview
+      slides it in from the right edge and settles over the preview; the shutter button disappears
+      (the voice control, gear icon, and capture progress indicator stay visible); capture
+      (touch/volume/voice) still works and still saves a real photo while it's shown, even with the
+      shutter button hidden; a right swipe on it slides it back off to the right, restoring the live
+      preview and bringing the shutter button back; the slide visibly follows the finger while
+      dragging rather than only snapping at the end.
+- [ ] **Cover-photo cycling:** with three cover photos configured, repeatedly left-swipe while
+      Overlay View is already shown and confirm it advances through all three in order and wraps
+      back to the first after the third, without ever hiding the overlay or dispatching a capture;
+      with only one cover photo configured, confirm an additional left swipe has no visible effect;
+      a right swipe always dismisses back to Camera Preview regardless of which cover photo is
+      showing.
+- [ ] **Overlay-visibility and index persistence:** leave the overlay showing (or hidden) on a
+      particular cover photo and fully close the app, then relaunch it - the same mode *and* the
+      same cover photo are restored automatically, with no settings-screen control for either
+      anywhere.
+- [ ] **Cover photo management:** "Add cover photo" opens the system Photo Picker up to three times;
+      each pick appends a new thumbnail to the settings screen and the Add button disappears once
+      three are configured; deleting a cover photo removes its thumbnail, shifts the remaining ones
+      up, and re-enables the Add button; the whole list survives an app restart without needing to
+      re-pick anything; deleting the cover photo currently shown in Overlay View on the camera
+      screen advances it to whichever photo now occupies that slot instead of leaving a stale image.
 - [ ] **Volume keys on the settings screen:** while settings is open, volume buttons adjust the
       device's normal media volume instead of taking a photo.
 - [ ] **Burst Mode capture:** switch to Burst Mode in settings, trigger a capture (touch, volume,
@@ -846,7 +876,7 @@ since none of it is fully covered by automated tests:
       app-spec.md), but repeated presses of the *same* trigger back-to-back should not have that
       extra delay.
 - [ ] **Flash/torch stay off:** on a device where flash/torch can be observed (e.g. watch for the
-      flash LED), confirm it never fires while Burst Mode is active or while the overlay image is
+      flash LED), confirm it never fires while Burst Mode is active or while a cover photo is
       visible.
 - [ ] **Error logging:** force a capture failure if possible (e.g. fill device storage, or revoke
       camera access mid-session) and confirm no error text appears on the camera screen, then pull
@@ -855,8 +885,8 @@ since none of it is fully covered by automated tests:
 - [ ] **Aspect-ratio letterboxing:** with 4:3 selected, the preview appears as a centered box with
       background-colored bars above/below (not stretched to fill the screen, and not pillarboxed -
       see "Capture aspect ratio and preview framing" for why portrait-only means letterboxing);
-      switching to 16:9 changes the box's proportions accordingly; the overlay image (if visible)
-      still covers the *entire* screen, bars included, unaffected by either ratio.
+      switching to 16:9 changes the box's proportions accordingly; the active cover photo (if
+      visible) still covers the *entire* screen, bars included, unaffected by either ratio.
 - [ ] **Aspect ratio matches the captured photo:** with each ratio selected, take a photo and
       confirm its framing in the Gallery visually matches what the live preview showed (not a
       noticeably different crop).
@@ -1438,3 +1468,57 @@ keeps filenames non-identifying in the picked SAF folder). No test changes were 
 (211/211 tests), `lintDebug` (0 issues), and `assembleDebug` all passed unchanged. This still needs
 the same real-device smoke test called out above, now also checking that a decrypted `.kenc`'s
 metadata carries the expected `logicalFilename`.
+
+The single overlay-image setting was then replaced with a list of up to three **cover photos** (per
+an `app-spec.md` update): `AppSettings.overlayImageUriString` became
+`coverPhotoUriStrings: List<String>`, `SettingsRepository.setOverlayImageUri` became
+`setCoverPhotoUriStrings` (DataStore persists the ordered list as one `\n`-joined string
+preference), and `OverlayImageStore`/`FileOverlayImageStore` moved from overwriting a single fixed
+file per selection to writing each cover photo to its own randomly-named file (plus a new `delete`
+method for cleaning up a removed one) since up to three now coexist. `OverlayVisibilityRepository`
+gained a second piece of persisted camera-screen state alongside `overlayVisible`:
+`activeCoverPhotoIndex`, defaulting to 0 and living in the same `camera_ui_state` DataStore file.
+`SettingsViewModel.onCoverPhotoSelected` appends to the list (a no-op past three), and the new
+`onCoverPhotoDeleted` removes an entry, shifts later ones up, and decrements/clamps the active index
+so it keeps pointing at the same photo (or the new last one) rather than going out of bounds -
+exactly the rule specified for the feature. On the camera screen, `CameraViewModel` combines the
+list with the persisted index into `CameraUiState.activeCoverPhotoUriString`/`coverPhotoCount`, and
+a new `onCoverPhotoCycleRequested` advances the index (wrapping) when more than one cover photo is
+configured. Teaching `CameraScreen`'s single tap/swipe gesture detector to tell "reveal the overlay"
+apart from "cycle within it" needed one real change: `detectTapOrHorizontalSwipe`'s `onDragEnd`
+callback now reports which direction the drag ended in, so `GrantedCameraContent` can route an
+additional left swipe that lands while Overlay View is already fully shown (`offsetX` still at 0)
+to the cycle callback instead of re-committing visibility, while an initial left swipe (or any swipe
+with zero/one cover photo configured) falls through to the original show/hide logic unchanged. The
+settings screen's single-thumbnail control became a `CoverPhotosSetting` row of up to three
+thumbnails, each with its own delete button, plus an Add button that hides once the cap is reached.
+One real compile-time surprise during verification: `SemanticsNodeInteraction.assertDoesNotExist()`
+is a member function in this project's Compose UI testing version, not a top-level extension
+requiring its own import (the same category of gotcha CLAUDE.md already calls out for
+`onNode`/`onAllNodes`) - the import had to be removed, not added, once `javap` on the cached
+`ui-test-api.jar` confirmed where the function actually lives. `testDebugUnitTest` (223/223 tests,
+16 new - cap-at-three enforcement, delete shifting the list and cleaning up its file, the
+index-decrement/clamp rule across several deletion positions, cycling with wraparound, zero/one-photo
+no-ops, and the corresponding Compose UI coverage on both screens), `lintDebug` (0 issues), and
+`assembleDebug` all passed.
+
+The build was then installed on a connected physical device (`installDebug`) and launched, with
+`adb logcat`/`dumpsys window` confirming no crash and the correct Activity in focus. Manually
+exercising the cycle gesture afterward didn't match the spec, which led to a real bug the unit tests
+hadn't caught: the cycle-vs-reveal decision in `GrantedCameraContent`'s `onDragEnd` read
+`uiState.overlayVisible`/`uiState.coverPhotoCount` directly from inside
+`.pointerInput(widthPx) { ... }`, whose key (the screen's pixel width) never changes in practice, so
+that block's closures are installed once and never re-evaluated - a stale `uiState` snapshot from
+whenever the gesture detector first attached, not the live value at the moment a later swipe
+actually completes. Compose's `pointerInput` deliberately doesn't restart on unrelated
+recomposition (that's what makes it cheap), so this doesn't show up in `CameraScreenTest` either,
+since each test case only ever has one composition to begin with. Fixed by wrapping `uiState` in
+`rememberUpdatedState` and reading through that inside the closure instead, which stays current
+across recompositions without needing to restart the gesture coroutine. `testDebugUnitTest` still
+passed unchanged afterward (223/223, one unrelated pre-existing flake in `KencPhotoEncryptorTest`'s
+mismatched-key-decrypt case confirmed by rerunning it in isolation), `lintDebug` (0 issues), and
+`assembleDebug` all passed, and the fixed build was reinstalled; the device had since locked with a
+secure lock screen `wm dismiss-keyguard` can't bypass, so this time verification fell back to
+confirming a crash-free `ActivityManager: Start proc` entry and a live `ps` entry for the process
+instead of the usual foreground-focus check. Device verification of the cover-photo swipe/cycle
+gestures themselves (as opposed to just install-and-launch) still has not been performed.

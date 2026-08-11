@@ -15,12 +15,15 @@ data class CameraUiState(
     val voiceListening: Boolean = false,
     val voiceError: String? = null,
     /**
-     * True only when the overlay was last left visible by a swipe gesture *and* an image has
-     * actually been selected; if no image has ever been picked, the live preview is shown
-     * regardless so the screen never renders a blank placeholder.
+     * True only when the overlay was last left visible by a swipe gesture *and* at least one
+     * cover photo has actually been configured; if none has ever been added, the live preview is
+     * shown regardless so the screen never renders a blank placeholder.
      */
     val overlayVisible: Boolean = false,
-    val overlayImageUriString: String? = null,
+    /** The cover photo at the current cover-photo index (see "Cover photo visibility" in app-spec.md), or null if none is configured. */
+    val activeCoverPhotoUriString: String? = null,
+    /** Total configured cover photos - used to decide whether an additional left swipe while Overlay View is shown should cycle (only when greater than 1). */
+    val coverPhotoCount: Int = 0,
     /**
      * The mode the camera pipeline is *currently bound for* - not a single global setting (each
      * trigger now has its own Single-Shot/Burst choice, see "Capture Mode" in app-spec.md), but

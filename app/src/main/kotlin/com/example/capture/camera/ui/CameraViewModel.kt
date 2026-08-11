@@ -131,13 +131,23 @@ class CameraViewModel @Inject constructor(
     private val _diagnosticsOverlayInfo = MutableStateFlow(DiagnosticsOverlayInfo())
     val diagnosticsOverlayInfo: StateFlow<DiagnosticsOverlayInfo> = _diagnosticsOverlayInfo.asStateFlow()
 
+    // Bundled into one flow first, then combined below, to stay within combine's 5-flow typed
+    // overload (see the kdoc on captureVoicePermissionState above for the same reasoning).
+    private val overlayState = combine(
+        overlayVisibilityRepository.overlayVisible,
+        overlayVisibilityRepository.activeCoverPhotoIndex,
+        ::OverlayState,
+    )
+
     val uiState: StateFlow<CameraUiState> = combine(
         captureVoicePermissionState,
         settingsRepository.settings,
-        overlayVisibilityRepository.overlayVisible,
+        overlayState,
         effectiveCaptureAspectRatio,
         _boundCaptureMode,
-    ) { state, settings, overlayVisible, captureAspectRatio, boundCaptureMode ->
+    ) { state, settings, overlay, captureAspectRatio, boundCaptureMode ->
+        val coverPhotos = settings.coverPhotoUriStrings
+        val activeIndex = overlay.activeCoverPhotoIndex.coerceIn(0, (coverPhotos.size - 1).coerceAtLeast(0))
         CameraUiState(
             cameraPermission = state.cameraPermission,
             microphonePermission = state.microphonePermission,
@@ -145,10 +155,11 @@ class CameraViewModel @Inject constructor(
             voiceTriggerEnabled = state.voiceTriggerEnabled,
             voiceListening = state.voice is VoiceRecognitionState.Listening,
             voiceError = (state.voice as? VoiceRecognitionState.Error)?.error?.toUserMessageOrNull(),
-            // Never show a blank placeholder: if the overlay was last left visible but no image
-            // has been picked yet, fall back to the live preview.
-            overlayVisible = overlayVisible && settings.overlayImageUriString != null,
-            overlayImageUriString = settings.overlayImageUriString,
+            // Never show a blank placeholder: if the overlay was last left visible but no cover
+            // photo has been configured yet, fall back to the live preview.
+            overlayVisible = overlay.overlayVisible && coverPhotos.isNotEmpty(),
+            activeCoverPhotoUriString = coverPhotos.getOrNull(activeIndex),
+            coverPhotoCount = coverPhotos.size,
             captureMode = boundCaptureMode,
             captureAspectRatio = captureAspectRatio,
         )
@@ -192,18 +203,19 @@ class CameraViewModel @Inject constructor(
                 }
             }
         }
-        // Flash and torch must never be used while Burst Mode is active or while the overlay
-        // image is visible (see "Flash and Torch Restrictions" in app-spec.md). There is
-        // currently no user-facing control that turns either on, but this actively forces them
-        // off - rather than merely relying on nothing else enabling them - every time either
-        // condition becomes true. Keyed off the raw CaptureState (is a burst actually running
-        // right now), not a settings value - with per-trigger capture modes there's no longer a
-        // single global "is Burst Mode selected" the way CameraUiState.captureMode used to mean.
+        // Flash and torch must never be used while Burst Mode is active or while a cover photo is
+        // visible (see "Flash and Torch Restrictions" in app-spec.md). There is currently no
+        // user-facing control that turns either on, but this actively forces them off - rather
+        // than merely relying on nothing else enabling them - every time either condition becomes
+        // true. Keyed off the raw CaptureState (is a burst actually running right now), not a
+        // settings value - with per-trigger capture modes there's no longer a single global "is
+        // Burst Mode selected" the way CameraUiState.captureMode used to mean.
         viewModelScope.launch {
             combine(
                 captureCoordinator.state.map { it is CaptureState.BurstStarted || it is CaptureState.BurstProgress },
                 overlayVisibilityRepository.overlayVisible,
-            ) { burstActive, overlayVisible -> burstActive || overlayVisible }
+                settingsRepository.settings.map { it.coverPhotoUriStrings.isNotEmpty() }.distinctUntilChanged(),
+            ) { burstActive, overlayVisible, hasCoverPhotos -> burstActive || (overlayVisible && hasCoverPhotos) }
                 .distinctUntilChanged()
                 .collect { mustDisableFlashAndTorch -> if (mustDisableFlashAndTorch) flashTorchController.disableFlashAndTorch() }
         }
@@ -411,6 +423,22 @@ class CameraViewModel @Inject constructor(
         applicationScope.launch { overlayVisibilityRepository.setOverlayVisible(visible) }
     }
 
+    /**
+     * Called when an additional left swipe lands while Overlay View is already shown (see "Cover
+     * photo visibility" in app-spec.md) - advances to the next cover photo, wrapping from the
+     * last back to the first. A no-op with zero or one cover photo configured, since there is
+     * nothing to cycle to. Written on [applicationScope] for the same durability reason as
+     * [onOverlayVisibilityChanged].
+     */
+    fun onCoverPhotoCycleRequested() {
+        applicationScope.launch {
+            val count = settingsRepository.settings.first().coverPhotoUriStrings.size
+            if (count <= 1) return@launch
+            val currentIndex = overlayVisibilityRepository.activeCoverPhotoIndex.first()
+            overlayVisibilityRepository.setActiveCoverPhotoIndex((currentIndex + 1) % count)
+        }
+    }
+
     private fun syncVoiceRecognition() {
         val shouldListen = voiceTriggerEnabled.value && microphonePermission.value == PermissionStatus.GRANTED
         viewModelScope.launch {
@@ -437,6 +465,11 @@ class CameraViewModel @Inject constructor(
         const val CAPTURE_MODE_REBIND_TIMEOUT_MILLIS = 3_000L
     }
 }
+
+private data class OverlayState(
+    val overlayVisible: Boolean,
+    val activeCoverPhotoIndex: Int,
+)
 
 private data class CaptureVoicePermissionState(
     val capture: CaptureState,

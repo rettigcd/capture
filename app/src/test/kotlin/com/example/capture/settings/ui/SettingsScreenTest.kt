@@ -2,6 +2,7 @@ package com.example.capture.settings.ui
 
 import android.app.Application
 import android.content.Context
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -10,6 +11,7 @@ import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -40,7 +42,8 @@ class SettingsScreenTest {
     private fun setScreen(
         uiState: SettingsUiState,
         onVibrationDurationChanged: (Long) -> Unit = {},
-        onPickImageClick: () -> Unit = {},
+        onAddCoverPhotoClick: () -> Unit = {},
+        onDeleteCoverPhotoClick: (Int) -> Unit = {},
         onCaptureModeChanged: (CaptureTriggerKind, CaptureMode) -> Unit = { _, _ -> },
         onBurstIntervalChanged: (Long) -> Unit = {},
         onCaptureAspectRatioChanged: (CaptureAspectRatio) -> Unit = {},
@@ -55,7 +58,8 @@ class SettingsScreenTest {
             SettingsScreen(
                 uiState = uiState,
                 onVibrationDurationChanged = onVibrationDurationChanged,
-                onPickImageClick = onPickImageClick,
+                onAddCoverPhotoClick = onAddCoverPhotoClick,
+                onDeleteCoverPhotoClick = onDeleteCoverPhotoClick,
                 onCaptureModeChanged = onCaptureModeChanged,
                 onBurstIntervalChanged = onBurstIntervalChanged,
                 onCaptureAspectRatioChanged = onCaptureAspectRatioChanged,
@@ -79,8 +83,8 @@ class SettingsScreenTest {
     }
 
     @Test
-    fun noImageSelectedMessage_isShown_whenNoImageHasBeenPicked() {
-        setScreen(SettingsUiState(overlayImageUriString = null))
+    fun noImageSelectedMessage_isShown_whenNoCoverPhotosHaveBeenPicked() {
+        setScreen(SettingsUiState(coverPhotoUriStrings = emptyList()))
 
         composeTestRule.onNodeWithText(context.getString(R.string.settings_no_image_selected))
             .performScrollTo()
@@ -116,15 +120,46 @@ class SettingsScreenTest {
     }
 
     @Test
-    fun clickingChooseImage_invokesCallback() {
+    fun clickingAddCoverPhoto_invokesCallback() {
         var clickCount = 0
-        setScreen(SettingsUiState(), onPickImageClick = { clickCount++ })
+        setScreen(SettingsUiState(), onAddCoverPhotoClick = { clickCount++ })
 
-        composeTestRule.onNodeWithText(context.getString(R.string.settings_choose_image_button))
+        composeTestRule.onNodeWithText(context.getString(R.string.settings_add_cover_photo_button))
             .performScrollTo()
             .performClick()
 
         assertThat(clickCount).isEqualTo(1)
+    }
+
+    @Test
+    fun addCoverPhotoButton_isHidden_onceThreeAreConfigured() {
+        setScreen(SettingsUiState(coverPhotoUriStrings = listOf("file://a", "file://b", "file://c")))
+
+        composeTestRule.onNodeWithText(context.getString(R.string.settings_add_cover_photo_button))
+            .assertDoesNotExist()
+    }
+
+    @Test
+    fun coverPhotoThumbnails_areShown_forEachConfiguredCoverPhoto() {
+        setScreen(SettingsUiState(coverPhotoUriStrings = listOf("file://a", "file://b")))
+
+        composeTestRule.onAllNodesWithContentDescription(context.getString(R.string.settings_cover_photo_thumbnail_content_description))
+            .assertCountEquals(2)
+    }
+
+    @Test
+    fun clickingDeleteOnACoverPhoto_invokesCallbackWithItsIndex() {
+        var deletedIndex: Int? = null
+        setScreen(
+            SettingsUiState(coverPhotoUriStrings = listOf("file://a", "file://b")),
+            onDeleteCoverPhotoClick = { deletedIndex = it },
+        )
+
+        composeTestRule.onNodeWithTag("delete_cover_photo_file://b")
+            .performScrollTo()
+            .performClick()
+
+        assertThat(deletedIndex).isEqualTo(1)
     }
 
     @Test
