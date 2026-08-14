@@ -1592,3 +1592,15 @@ change), `lintDebug` (0 issues), and `assembleDebug` all passed. Device verifica
 relocated voice control and the new compact controls (confirming neither overlaps the gear/debug
 icons or the shutter button on a real screen, and that both zoom and aspect-ratio changes actually
 apply to the live preview) has not been performed.
+
+`SafEncryptedPhotoStorage`'s `.kenc` metadata block was then reworked to match keibler's own
+`EncryptedMetadataDto` shape: `capturedAtMillis` was replaced with a `photoDate` field (an ISO-8601
+local date-time with no offset, e.g. `2024-03-05T10:15:30`, truncated to whole seconds), plus a
+`tags` object carrying a single `"Capture": ["+"]` tag so keibler's own viewer recognizes these
+captures as tagged rather than falling back to empty metadata; `logicalFilename` was kept unchanged
+alongside them as an extra field outside keibler's DTO; keibler's own metadata parsing already
+tolerates unrecognized fields. No test changes were needed - `SafEncryptedPhotoStorage` still has no
+unit coverage of its own. `testDebugUnitTest` (224/224 tests), `lintDebug` (0 issues), and
+`assembleDebug` all passed unchanged. This still needs the same real-device smoke test called out
+above, now also checking that a decrypted `.kenc`'s metadata carries the expected `photoDate`/`tags`
+shape.
