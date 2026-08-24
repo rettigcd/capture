@@ -516,6 +516,11 @@ one cover photo is configured.
 
 An additional left swipe while Overlay View is already shown shall advance to the next cover
 photo, wrapping from the last back to the first, when more than one cover photo is configured.
+Because the cover photo gives no visual feedback that tracks the finger during this swipe (unlike
+showing/dismissing it), advancing to the next cover photo shall additionally require the swipe's
+horizontal distance to exceed the same swipe threshold used for gesture diagnostics
+classification, not merely enough movement to be recognized as a drag - so a mostly-vertical swipe
+with a little incidental horizontal drift does not unintentionally advance the cover photo.
 
 A right swipe shall dismiss the active cover photo by sliding it off to the right, without
 changing the cover-photo index.
@@ -896,6 +901,7 @@ Write Compose tests verifying:
 * A capture or file-saving error does not display any error text or detail on the main camera screen (see "Error Handling")
 * A left swipe on the camera preview shows the active cover photo (Overlay View), and a right swipe on it hides it again (Camera Preview)
 * With more than one cover photo configured, an additional left swipe while Overlay View is shown cycles to the next cover photo, wrapping from the last back to the first
+* A mostly-vertical swipe while Overlay View is shown, whose horizontal component stays below the swipe threshold, does not cycle to the next cover photo
 * The restored overlay-visibility state (from the last time the app was closed) is reflected correctly on launch
 * No settings-screen control exists for enabling or disabling Overlay View directly
 * The settings screen shows the configured cover photos (as thumbnails, in order), lets the user add one (up to three) and delete any of them, and the Add control is disabled or hidden once three are configured

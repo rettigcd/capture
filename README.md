@@ -1644,3 +1644,37 @@ InvokesCallbackWhenToggled". `testDebugUnitTest` (227/227 tests, 3 new), `lintDe
 needs real-device verification: toggling the setting should immediately hide/show both system bars
 on both screens, an edge swipe while hidden should transiently reveal them without flipping the
 setting back off, and turning it back off should immediately restore them.
+
+Fixed a reported bug where a mostly-vertical swipe (swiping up from near the bottom of the screen)
+while Overlay View was already shown could unintentionally cycle to the next cover photo. The
+cycle-vs-reveal branch in `GrantedCameraContent`'s `onDragEnd` only checked the *sign* of the drag's
+total horizontal delta, not its magnitude - `offsetX` (which normally provides visual feedback and,
+via its half-screen-width comparison, an implicit distance threshold for showing/dismissing the
+overlay) stays pinned at 0 for the whole gesture in this specific branch, so a tiny leftward drift
+incidental to an otherwise-vertical swipe was enough to clear touch slop and register as a "left
+swipe." Fixed by changing `detectTapOrHorizontalSwipe`'s `onDragEnd` callback to pass the drag's raw
+total horizontal delta (`Float`) instead of a pre-computed `draggedLeft: Boolean`, and having the
+cover-photo-cycle branch additionally require `abs(totalDeltaX)` to clear `SWIPE_THRESHOLD_DP` (the
+same 32dp distance already used to classify a drag as Swipe Left/Right rather than Movement Below
+Swipe Threshold in gesture diagnostics) before cycling - ties the two together so cycling now
+requires an actual `SWIPE_LEFT` classification, not just enough movement to count as a drag at all.
+Showing/dismissing the overlay is unaffected, since that path's own half-screen-width `offsetX`
+threshold was already far larger. Added `mostlyVerticalSwipeOnTheOverlay_withIncidentalLeftwardDrift_doesNotCycle`
+to `CameraScreenTest`, simulating a large vertical drag with only a few pixels of horizontal drift via
+a manual `down`/`moveTo`/`up` touch sequence (rather than the built-in `swipeUp()`, which has no
+horizontal component at all and so wouldn't have reproduced the bug) and asserting the cycle callback
+is not invoked while the ordinary visibility-commit callback still is. `app-spec.md`'s "Overlay
+gestures" section and Compose-test checklist were updated to document the new distance requirement.
+`testDebugUnitTest` (228/228 tests, 1 new; the same pre-existing `KencPhotoEncryptorTest` flake noted
+above), `lintDebug` (0 issues), and `assembleDebug` all passed. Device verification of the fix itself
+has not been performed.
+
+`SWIPE_THRESHOLD_DP` was then doubled from 32 to 64 on request, requiring a longer swipe before both
+the cover-photo-cycle action above and the diagnostic Swipe Left/Right classification kick in (the
+two remain tied together, per the change above). No other code changed. `testDebugUnitTest`
+(228/228, no failures this run - including the previously-noted `KencPhotoEncryptorTest` flake, which
+did not reproduce), `lintDebug` (0 issues, confirmed clean previously and unaffected by a constant
+value change), and `assembleDebug` all passed, and the rebuilt APK was installed and relaunched on
+device with `mCurrentFocus` confirming `MainActivity` and no `FATAL EXCEPTION`/`AndroidRuntime`
+crash in logcat. Whether 64dp feels right for the gesture itself still needs hands-on device
+verification.

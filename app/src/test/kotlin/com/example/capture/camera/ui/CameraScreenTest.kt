@@ -394,6 +394,36 @@ class CameraScreenTest {
     }
 
     @Test
+    fun mostlyVerticalSwipeOnTheOverlay_withIncidentalLeftwardDrift_doesNotCycle() {
+        var cycleCount = 0
+        var visibilityCommits = 0
+        setScreen(
+            CameraUiState(
+                cameraPermission = PermissionStatus.GRANTED,
+                overlayVisible = true,
+                activeCoverPhotoUriString = "content://fake/overlay",
+                coverPhotoCount = 2,
+            ),
+            onCoverPhotoCycleRequested = { cycleCount++ },
+            onOverlayVisibilityChanged = { visibilityCommits++ },
+        )
+
+        // A big vertical swipe (well past touch slop) with only a few pixels of incidental
+        // leftward drift - not a real leftward swipe, but enough to have misfired as one before
+        // onDragEnd started requiring the horizontal component to clear the swipe threshold too.
+        composeTestRule.onNodeWithContentDescription(
+            context.getString(R.string.overlay_image_content_description),
+        ).performTouchInput {
+            down(Offset(centerX, bottom - 1f))
+            moveTo(Offset(centerX - 10f, top + 1f))
+            up()
+        }
+
+        assertThat(cycleCount).isEqualTo(0)
+        assertThat(visibilityCommits).isEqualTo(1)
+    }
+
+    @Test
     fun leftSwipeOnTheOverlay_withOnlyOneCoverPhoto_doesNotCycle() {
         var cycleCount = 0
         setScreen(

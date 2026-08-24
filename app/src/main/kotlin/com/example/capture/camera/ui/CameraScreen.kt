@@ -174,7 +174,15 @@ private fun GrantedCameraContent(
     cameraPreview: @Composable (Modifier) -> Unit,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val widthPx = with(LocalDensity.current) { maxWidth.toPx() }
+        val density = LocalDensity.current
+        val widthPx = with(density) { maxWidth.toPx() }
+        // Gates only the "cycle to the next cover photo" swipe (see onDragEnd below) - unlike
+        // showing/dismissing the overlay, that action has no offsetX-driven distance requirement
+        // of its own (offsetX sits pinned at 0 the whole time), so a mostly-vertical swipe with a
+        // little incidental horizontal drift could otherwise clear touch slop and misfire as a
+        // leftward swipe. Reuses SWIPE_THRESHOLD_DP, the same distance already used to classify a
+        // drag as Swipe Left/Right for diagnostics, so cycling now requires an actual Swipe Left.
+        val coverPhotoCycleSwipeThresholdPx = with(density) { SWIPE_THRESHOLD_DP.dp.toPx() }
         // 0f = fully over the preview (visible); widthPx = fully off the right edge (hidden).
         val offsetX = remember(widthPx) { Animatable(if (uiState.overlayVisible) 0f else widthPx) }
         val coroutineScope = rememberCoroutineScope()
@@ -222,15 +230,24 @@ private fun GrantedCameraContent(
                                 offsetX.snapTo((offsetX.value + deltaX).coerceIn(0f, widthPx))
                             }
                         },
-                        onDragEnd = { draggedLeft ->
+                        onDragEnd = { totalDeltaX ->
                             // An additional left swipe while Overlay View is already fully shown
                             // (offsetX sat at 0 for the whole drag, so it's still 0 here) cycles to
                             // the next cover photo instead of re-committing visibility - see "Cover
                             // photo visibility" in app-spec.md. With zero or one cover photo
                             // configured, onCoverPhotoCycleRequested is a no-op and this falls
                             // through to the ordinary show/hide handling below (harmlessly
-                            // re-committing the same visibility).
-                            if (latestUiState.overlayVisible && draggedLeft && latestUiState.coverPhotoCount > 1) {
+                            // re-committing the same visibility). Requires an actual leftward swipe
+                            // past coverPhotoCycleSwipeThresholdPx, not just enough movement to
+                            // clear touch slop, so a mostly-vertical swipe with a little incidental
+                            // horizontal drift doesn't misfire as a cycle request.
+                            val draggedLeft = totalDeltaX < 0
+                            if (
+                                latestUiState.overlayVisible &&
+                                draggedLeft &&
+                                latestUiState.coverPhotoCount > 1 &&
+                                abs(totalDeltaX) >= coverPhotoCycleSwipeThresholdPx
+                            ) {
                                 onCoverPhotoCycleRequested()
                             } else {
                                 val shouldShow = offsetX.value < widthPx / 2
@@ -336,11 +353,11 @@ private fun GrantedCameraContent(
  * touch slop counts as "dragging" (cancelling the tap, matching plain tap-gesture semantics), but
  * only the horizontal component is reported to [onDrag].
  *
- * Independently of that existing tap/drag behavior, every touch interaction is also classified and
- * reported through [onGestureEvent] for diagnostics (see "Gesture Processing"/"Gesture Events" in
- * app-spec.md) - a drag that never exceeds [SWIPE_THRESHOLD_DP] is still handled exactly as before
- * (whichever side of the midpoint it settles on), it is just additionally labelled
- * [GestureClassification.MOVEMENT_BELOW_SWIPE_THRESHOLD] rather than [GestureClassification.SWIPE_LEFT]/
+ * Every touch interaction is also classified and reported through [onGestureEvent] for diagnostics
+ * (see "Gesture Processing"/"Gesture Events" in app-spec.md); [onDragEnd] receives the drag's raw
+ * total horizontal delta, rather than just its direction, so a caller can apply its own distance
+ * threshold to a specific action - [SWIPE_THRESHOLD_DP] is the same distance used to separate
+ * [GestureClassification.MOVEMENT_BELOW_SWIPE_THRESHOLD] from [GestureClassification.SWIPE_LEFT]/
  * [GestureClassification.SWIPE_RIGHT] in the diagnostic log.
  *
  * [onTap] receives whether the tap landed in the top or bottom half of this pointer input area's
@@ -352,7 +369,7 @@ private fun GrantedCameraContent(
 private suspend fun PointerInputScope.detectTapOrHorizontalSwipe(
     onTap: (isTopHalf: Boolean) -> Unit,
     onDrag: (deltaX: Float) -> Unit,
-    onDragEnd: (draggedLeft: Boolean) -> Unit,
+    onDragEnd: (totalDeltaX: Float) -> Unit,
     overlayVisible: Boolean,
     cameraAcceptingCaptureRequests: Boolean,
     onGestureEvent: (GestureDiagnosticEvent) -> Unit,
@@ -410,7 +427,7 @@ private suspend fun PointerInputScope.detectTapOrHorizontalSwipe(
                     ),
                 )
                 onGestureEvent(GestureDiagnosticEvent.Accepted(nowMillis, classification))
-                if (isDragging) onDragEnd(totalDeltaX < 0) else onTap(down.position.y < size.height / 2f)
+                if (isDragging) onDragEnd(totalDeltaX) else onTap(down.position.y < size.height / 2f)
                 break
             }
             val delta = change.positionChange()
@@ -431,8 +448,13 @@ private suspend fun PointerInputScope.detectTapOrHorizontalSwipe(
 /** Identifies which UI layer produced a [GestureDiagnosticEvent.Cancelled] (see "Gesture Cancellation Diagnostics" in app-spec.md). */
 private const val GESTURE_SURFACE_COMPONENT_NAME = "CameraScreen.fullScreenGestureSurface"
 
-/** Diagnostic-only threshold distinct from the system touch-slop: doesn't change swipe-to-toggle-overlay behavior, only its classification label. */
-private const val SWIPE_THRESHOLD_DP = 32
+/**
+ * Distance threshold distinct from the system touch-slop, used both to label a drag Swipe
+ * Left/Right vs. Movement Below Swipe Threshold in diagnostics, and to gate the cover-photo-cycle
+ * swipe in [GrantedCameraContent] (so a mostly-vertical swipe with a little incidental horizontal
+ * drift doesn't misfire as a cycle request) - see "Overlay gestures" in app-spec.md.
+ */
+private const val SWIPE_THRESHOLD_DP = 64
 
 private const val OVERLAY_ANIMATION_DURATION_MILLIS = 200
 
