@@ -49,6 +49,12 @@ data class CameraUiState(
     val zoomLevel: Int = AppSettings.DEFAULT_ZOOM_LEVEL,
     /** Drives [CaptureProgressIndicator] - see its kdoc and "Capture Progress Indicator" in app-spec.md. */
     val captureProgress: CaptureProgressUi = CaptureProgressUi.Hidden,
+    /**
+     * Mirrors the persisted "Full screen" setting (see "Settings" in app-spec.md) - `MainActivity`
+     * observes this (not the raw setting) to hide/show the system status and navigation bars,
+     * since it applies app-wide rather than being specific to the camera screen.
+     */
+    val fullScreenEnabled: Boolean = false,
 )
 
 /**

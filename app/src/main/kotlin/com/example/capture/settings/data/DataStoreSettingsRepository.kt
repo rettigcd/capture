@@ -35,6 +35,7 @@ class DataStoreSettingsRepository @Inject constructor(
         val ENCRYPT_SAVED_PHOTOS = booleanPreferencesKey("encrypt_saved_photos")
         val ENCRYPTED_PHOTOS_FOLDER_URI = stringPreferencesKey("encrypted_photos_folder_uri")
         val ZOOM_LEVEL = intPreferencesKey("zoom_level")
+        val FULL_SCREEN_ENABLED = booleanPreferencesKey("full_screen_enabled")
 
         // One key per CaptureTriggerKind (see "Capture Mode" in app-spec.md) rather than the single
         // "capture_mode" key this replaced - that old key is simply orphaned/never read again, not
@@ -61,6 +62,7 @@ class DataStoreSettingsRepository @Inject constructor(
             encryptSavedPhotos = preferences[Keys.ENCRYPT_SAVED_PHOTOS] ?: false,
             encryptedPhotosFolderUriString = preferences[Keys.ENCRYPTED_PHOTOS_FOLDER_URI],
             zoomLevel = preferences[Keys.ZOOM_LEVEL] ?: AppSettings.DEFAULT_ZOOM_LEVEL,
+            fullScreenEnabled = preferences[Keys.FULL_SCREEN_ENABLED] ?: false,
         )
     }
 
@@ -104,6 +106,10 @@ class DataStoreSettingsRepository @Inject constructor(
 
     override suspend fun setZoomLevel(level: Int) {
         context.settingsDataStore.edit { it[Keys.ZOOM_LEVEL] = level }
+    }
+
+    override suspend fun setFullScreenEnabled(enabled: Boolean) {
+        context.settingsDataStore.edit { it[Keys.FULL_SCREEN_ENABLED] = enabled }
     }
 
     // Falls back to the default rather than throwing if a future release ever removes/renames an

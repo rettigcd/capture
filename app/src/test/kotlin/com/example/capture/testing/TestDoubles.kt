@@ -266,6 +266,10 @@ class FakeSettingsRepository(initial: AppSettings = AppSettings()) : SettingsRep
     override suspend fun setZoomLevel(level: Int) {
         _settings.value = _settings.value.copy(zoomLevel = level)
     }
+
+    override suspend fun setFullScreenEnabled(enabled: Boolean) {
+        _settings.value = _settings.value.copy(fullScreenEnabled = enabled)
+    }
 }
 
 class FakeCaptureErrorLogger : CaptureErrorLogger {

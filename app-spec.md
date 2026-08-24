@@ -795,6 +795,11 @@ The settings screen lets the user configure:
    volume up, volume down, and voice command (see "Capture Mode").
 4. **Burst interval** - a slider with discrete snap points every 250 ms from 250 ms to 2 seconds,
    defaulting to 500 ms (see "Burst Mode").
+5. **Full screen** - a switch, off by default. When on, the Android system status bar and
+   navigation bar are hidden (immersive mode) across the whole app - both the camera screen and
+   this settings screen - rather than just the camera screen; the OS's standard edge swipe still
+   temporarily reveals them without turning the setting off. Turning it off restores the bars
+   immediately.
 
 **Capture aspect ratio** and **Camera zoom** are configured directly on the camera screen instead of
 here (see "UI requirements" above), as compact controls that sit at the bottom of the live preview
@@ -818,7 +823,7 @@ Both are still persisted exactly the same way as the settings-screen controls ab
 moving their control off the settings screen changes nothing about how or where the values
 themselves are stored.
 
-Persist all of these settings (eleven distinct persisted values in total: the four settings-screen
+Persist all of these settings (twelve distinct persisted values in total: the five settings-screen
 controls above - once the six per-trigger capture modes are counted individually and the
 cover-photo list is counted as one - plus capture aspect ratio and camera zoom configured on the
 camera screen), and the overlay-visibility state and cover-photo index described above, across app restarts
@@ -887,7 +892,6 @@ Write Compose tests verifying:
 * Camera UI appears when permission is granted
 * Touching the preview dispatches a screen-touch capture trigger
 * Pressing the visible shutter control dispatches a capture trigger
-* Voice-listening state is visibly represented
 * Capture-in-progress state is represented
 * A capture or file-saving error does not display any error text or detail on the main camera screen (see "Error Handling")
 * A left swipe on the camera preview shows the active cover photo (Overlay View), and a right swipe on it hides it again (Camera Preview)
@@ -895,7 +899,7 @@ Write Compose tests verifying:
 * The restored overlay-visibility state (from the last time the app was closed) is reflected correctly on launch
 * No settings-screen control exists for enabling or disabling Overlay View directly
 * The settings screen shows the configured cover photos (as thumbnails, in order), lets the user add one (up to three) and delete any of them, and the Add control is disabled or hidden once three are configured
-* The settings screen reflects and updates each of its stored settings, including the capture-mode selector and the burst-interval slider
+* The settings screen reflects and updates each of its stored settings, including the capture-mode selector, the burst-interval slider, and the full-screen switch
 * The camera screen's compact capture-aspect-ratio and camera-zoom controls reflect the current values, invoke their respective callbacks when changed, and are hidden while Overlay View is shown
 
 The composables must accept state and callbacks so they can be tested without starting a real camera.

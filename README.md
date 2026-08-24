@@ -851,6 +851,10 @@ since none of it is fully covered by automated tests:
       the camera screen.
 - [ ] **Vibration duration setting:** moving the slider changes the felt pulse length on the next
       capture; the value survives an app restart.
+- [ ] **Full screen setting:** turning it on immediately hides the system status and navigation
+      bars on both the camera and settings screens; an edge swipe while hidden transiently reveals
+      them again without changing the switch back off; turning it off immediately restores both
+      bars; the value survives an app restart.
 - [ ] **Overlay swipe gestures:** with a cover photo configured, a left swipe on the live preview
       slides it in from the right edge and settles over the preview; the shutter button and the
       compact zoom/aspect-ratio controls both disappear (the gear icon and capture progress
@@ -1614,3 +1618,29 @@ used everywhere else (shutter button, capture progress, etc., which stay fully o
 spec changes were needed - this is a pure visual tweak with no new behavior to assert.
 `testDebugUnitTest` (224/224 tests, unchanged), `lintDebug` (0 issues), and `assembleDebug` all
 passed.
+
+A **Full screen** setting was then added: a fifth settings-screen switch (`AppSettings.fullScreenEnabled`,
+default `false`, persisted via a new `FULL_SCREEN_ENABLED` DataStore key) that hides the Android
+system status and navigation bars app-wide - not just on the camera screen - via
+`WindowInsetsControllerCompat`. Rather than adding a per-screen effect, `CameraViewModel` (already
+Activity-scoped and already mirroring settings into `CameraUiState`, the same way `zoomLevel` is)
+gained a `fullScreenEnabled` field on `CameraUiState`, and `MainActivity` - the only place with a
+`Window` reference and the sole owner of both Compose destinations - collects it in a
+`LaunchedEffect` inside `setContent` and calls a small `applyFullScreenMode` that pairs
+`WindowCompat.setDecorFitsSystemWindows` with `WindowInsetsControllerCompat.hide`/`show`, using
+`BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE` so the OS's standard edge swipe still works. Threading it
+through `SettingsRepository`/`DataStoreSettingsRepository`/`SettingsUiState`/`SettingsViewModel`/
+`SettingsScreen`/`SettingsRoute` followed the exact same shape as the existing diagnostics-file-
+logging switch, down to reusing `FakeSettingsRepository` in `TestDoubles.kt`. Also fixed two things
+found while back in `app-spec.md` for the persisted-settings count this addition bumped from eleven
+to twelve: a stale "Voice-listening state is visibly represented" Compose-test bullet left over from
+hiding the voice toggle earlier in this log, and `noOverlayVisibilityControlExists_onTheSettingsScreen`'s
+hardcoded toggle count (now 3, not 2). New tests: `CameraViewModelTest`'s "uiState reflects whether
+full screen is currently enabled", `SettingsViewModelTest`'s "changing full screen updates state and
+is persisted", and `SettingsScreenTest`'s "fullScreenSwitch_reflectsTheCurrentValue_and
+InvokesCallbackWhenToggled". `testDebugUnitTest` (227/227 tests, 3 new), `lintDebug` (0 issues), and
+`assembleDebug` all passed. `MainActivity`'s window-inset behavior itself has no unit-test coverage
+(Activity/`Window` code, same category as the `OrientationEventListener` rotation tracking) and
+needs real-device verification: toggling the setting should immediately hide/show both system bars
+on both screens, an edge swipe while hidden should transiently reveal them without flipping the
+setting back off, and turning it back off should immediately restore them.

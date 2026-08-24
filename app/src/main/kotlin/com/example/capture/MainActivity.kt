@@ -5,7 +5,13 @@ import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
 import com.example.capture.camera.ui.CameraViewModel
@@ -36,8 +42,33 @@ class MainActivity : ComponentActivity() {
             CaptureTheme {
                 val controller = rememberNavController()
                 SideEffect { navController = controller }
+
+                // Applied here rather than per-screen: the "Full screen" setting (see "Settings" in
+                // app-spec.md) hides the system bars app-wide, not just on the camera screen, and
+                // this Activity is the only place with a Window to hide them from.
+                val uiState by cameraViewModel.uiState.collectAsStateWithLifecycle()
+                LaunchedEffect(uiState.fullScreenEnabled) { applyFullScreenMode(uiState.fullScreenEnabled) }
+
                 CaptureApp(cameraViewModel = cameraViewModel, navController = controller)
             }
+        }
+    }
+
+    /**
+     * `WindowCompat.setDecorFitsSystemWindows` is toggled together with the bars themselves,
+     * rather than unconditionally at edge-to-edge, so this setting change has no effect at all
+     * while it's off - on API 35+ the OS already enforces edge-to-edge regardless of this call, but
+     * on older API levels this keeps pre-existing (non-edge-to-edge) layout behavior intact unless
+     * the user actually turns full screen on.
+     */
+    private fun applyFullScreenMode(enabled: Boolean) {
+        WindowCompat.setDecorFitsSystemWindows(window, !enabled)
+        val insetsController = WindowInsetsControllerCompat(window, window.decorView)
+        if (enabled) {
+            insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            insetsController.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            insetsController.show(WindowInsetsCompat.Type.systemBars())
         }
     }
 

@@ -46,6 +46,7 @@ class SettingsScreenTest {
         onCaptureModeChanged: (CaptureTriggerKind, CaptureMode) -> Unit = { _, _ -> },
         onBurstIntervalChanged: (Long) -> Unit = {},
         onDiagnosticsFileLoggingChanged: (Boolean) -> Unit = {},
+        onFullScreenEnabledChanged: (Boolean) -> Unit = {},
         onEncryptSavedPhotosChanged: (Boolean) -> Unit = {},
         onChooseEncryptedPhotosFolderClick: () -> Unit = {},
         onNavigateToEncryptionKey: () -> Unit = {},
@@ -60,6 +61,7 @@ class SettingsScreenTest {
                 onCaptureModeChanged = onCaptureModeChanged,
                 onBurstIntervalChanged = onBurstIntervalChanged,
                 onDiagnosticsFileLoggingChanged = onDiagnosticsFileLoggingChanged,
+                onFullScreenEnabledChanged = onFullScreenEnabledChanged,
                 onEncryptSavedPhotosChanged = onEncryptSavedPhotosChanged,
                 onChooseEncryptedPhotosFolderClick = onChooseEncryptedPhotosFolderClick,
                 onNavigateToEncryptionKey = onNavigateToEncryptionKey,
@@ -89,14 +91,14 @@ class SettingsScreenTest {
     @Test
     fun noOverlayVisibilityControlExists_onTheSettingsScreen() {
         // Overlay visibility is controlled exclusively by a swipe gesture on the camera screen -
-        // the only toggles on this screen are "Encrypt saved photos" and the diagnostics-file-
-        // logging switch (see "Diagnostic Persistence" in app-spec.md); there must be no separate
-        // one for the overlay.
+        // the only toggles on this screen are "Encrypt saved photos", the diagnostics-file-logging
+        // switch, and the full-screen switch (see "Diagnostic Persistence"/"Settings" in
+        // app-spec.md); there must be no separate one for the overlay.
         setScreen(SettingsUiState())
 
         assertThat(
             composeTestRule.onAllNodes(isToggleable()).fetchSemanticsNodes(atLeastOneRootRequired = false),
-        ).hasSize(2)
+        ).hasSize(3)
     }
 
     @Test
@@ -108,6 +110,21 @@ class SettingsScreenTest {
         )
 
         composeTestRule.onNodeWithTag("diagnostics_file_logging_switch")
+            .performScrollTo()
+            .performClick()
+
+        assertThat(enabled).isTrue()
+    }
+
+    @Test
+    fun fullScreenSwitch_reflectsTheCurrentValue_andInvokesCallbackWhenToggled() {
+        var enabled: Boolean? = null
+        setScreen(
+            SettingsUiState(fullScreenEnabled = false),
+            onFullScreenEnabledChanged = { enabled = it },
+        )
+
+        composeTestRule.onNodeWithTag("full_screen_switch")
             .performScrollTo()
             .performClick()
 

@@ -60,6 +60,7 @@ fun SettingsScreen(
     onCaptureModeChanged: (CaptureTriggerKind, CaptureMode) -> Unit,
     onBurstIntervalChanged: (Long) -> Unit,
     onDiagnosticsFileLoggingChanged: (Boolean) -> Unit,
+    onFullScreenEnabledChanged: (Boolean) -> Unit,
     onEncryptSavedPhotosChanged: (Boolean) -> Unit,
     onChooseEncryptedPhotosFolderClick: () -> Unit,
     onNavigateToEncryptionKey: () -> Unit,
@@ -122,6 +123,11 @@ fun SettingsScreen(
             DiagnosticsFileLoggingSetting(
                 enabled = uiState.diagnosticsFileLoggingEnabled,
                 onEnabledChanged = onDiagnosticsFileLoggingChanged,
+            )
+            HorizontalDivider()
+            FullScreenSetting(
+                enabled = uiState.fullScreenEnabled,
+                onEnabledChanged = onFullScreenEnabledChanged,
             )
             HorizontalDivider()
             Button(onClick = onNavigateToEncryptionKey) {
@@ -353,6 +359,24 @@ private fun DiagnosticsFileLoggingSetting(enabled: Boolean, onEnabledChanged: (B
             checked = enabled,
             onCheckedChange = onEnabledChanged,
             modifier = Modifier.testTag("diagnostics_file_logging_switch"),
+        )
+    }
+}
+
+/**
+ * Off by default (see "Settings" in app-spec.md). Applies immediately and app-wide - `MainActivity`
+ * observes [com.example.capture.camera.ui.CameraUiState.fullScreenEnabled] (mirrored from this same
+ * persisted setting) and hides/shows the system status and navigation bars accordingly, regardless
+ * of which screen (camera or settings) is currently showing.
+ */
+@Composable
+private fun FullScreenSetting(enabled: Boolean, onEnabledChanged: (Boolean) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.settings_full_screen_label))
+        Switch(
+            checked = enabled,
+            onCheckedChange = onEnabledChanged,
+            modifier = Modifier.testTag("full_screen_switch"),
         )
     }
 }

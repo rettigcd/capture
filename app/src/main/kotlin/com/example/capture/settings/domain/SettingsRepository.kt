@@ -24,4 +24,5 @@ interface SettingsRepository {
     suspend fun setEncryptSavedPhotos(enabled: Boolean)
     suspend fun setEncryptedPhotosFolderUri(uriString: String?)
     suspend fun setZoomLevel(level: Int)
+    suspend fun setFullScreenEnabled(enabled: Boolean)
 }

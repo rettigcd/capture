@@ -164,6 +164,7 @@ class CameraViewModel @Inject constructor(
             captureMode = boundCaptureMode,
             captureAspectRatio = captureAspectRatio,
             zoomLevel = settings.zoomLevel,
+            fullScreenEnabled = settings.fullScreenEnabled,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), CameraUiState())
 

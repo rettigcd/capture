@@ -650,6 +650,18 @@ class CameraViewModelTest {
     }
 
     @Test
+    fun `uiState reflects whether full screen is currently enabled`() = runTest {
+        val settings = FakeSettingsRepository(AppSettings(fullScreenEnabled = true))
+        val vm = buildViewModel(settings = settings, scheduler = testScheduler)
+        val collectJob = launch { vm.uiState.collect {} }
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.fullScreenEnabled).isTrue()
+
+        collectJob.cancel()
+    }
+
+    @Test
     fun `changing the zoom level from the camera screen updates state and is clamped to the valid range`() = runTest {
         val settings = FakeSettingsRepository()
         val vm = buildViewModel(settings = settings, scheduler = testScheduler)

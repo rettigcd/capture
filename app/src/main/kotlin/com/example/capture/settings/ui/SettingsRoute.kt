@@ -70,6 +70,7 @@ fun SettingsRoute(
         onCaptureModeChanged = viewModel::onCaptureModeChanged,
         onBurstIntervalChanged = viewModel::onBurstIntervalChanged,
         onDiagnosticsFileLoggingChanged = viewModel::onDiagnosticsFileLoggingChanged,
+        onFullScreenEnabledChanged = viewModel::onFullScreenEnabledChanged,
         onEncryptSavedPhotosChanged = viewModel::onEncryptSavedPhotosToggled,
         onChooseEncryptedPhotosFolderClick = viewModel::onChooseEncryptedPhotosFolderClicked,
         onNavigateToEncryptionKey = onNavigateToEncryptionKey,

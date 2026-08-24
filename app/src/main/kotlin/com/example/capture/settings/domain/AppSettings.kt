@@ -48,6 +48,11 @@ data class AppSettings(
      * in app-spec.md).
      */
     val zoomLevel: Int = DEFAULT_ZOOM_LEVEL,
+    /**
+     * Off by default. When on, `MainActivity` hides the Android system status and navigation bars
+     * (immersive mode) across the whole app - see "Settings" in app-spec.md.
+     */
+    val fullScreenEnabled: Boolean = false,
 ) {
     companion object {
         const val DEFAULT_VIBRATION_DURATION_MILLIS = 60L

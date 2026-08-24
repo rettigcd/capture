@@ -288,6 +288,21 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun `changing full screen updates state and is persisted`() = runTest {
+        val repository = FakeSettingsRepository()
+        val vm = buildViewModel(repository)
+        val collectJob = launch { vm.uiState.collect {} }
+
+        vm.onFullScreenEnabledChanged(true)
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.fullScreenEnabled).isTrue()
+        assertThat(repository.settings.value.fullScreenEnabled).isTrue()
+
+        collectJob.cancel()
+    }
+
+    @Test
     fun `a selection write survives the view model being cleared right afterward`() = runTest {
         // Regression test for a real bug: SettingsViewModel is scoped to the "settings"
         // NavBackStackEntry, which is popped (clearing the ViewModel and cancelling

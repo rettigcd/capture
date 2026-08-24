@@ -127,6 +127,10 @@ class SettingsViewModel @Inject constructor(
         applicationScope.launch { settingsRepository.setDiagnosticsFileLoggingEnabled(enabled) }
     }
 
+    fun onFullScreenEnabledChanged(enabled: Boolean) {
+        applicationScope.launch { settingsRepository.setFullScreenEnabled(enabled) }
+    }
+
     /**
      * Turning on with no folder yet picked launches the folder picker instead of persisting
      * `true` directly - [onEncryptedPhotosFolderPicked] is what actually turns encryption on,
@@ -177,4 +181,5 @@ private fun AppSettings.toUiState(hasKeyFile: Boolean) = SettingsUiState(
     encryptSavedPhotos = encryptSavedPhotos,
     encryptSavedPhotosAvailable = hasKeyFile,
     hasEncryptedPhotosFolder = encryptedPhotosFolderUriString != null,
+    fullScreenEnabled = fullScreenEnabled,
 )
