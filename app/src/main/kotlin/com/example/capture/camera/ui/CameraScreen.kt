@@ -350,8 +350,13 @@ private fun GrantedCameraContent(
  * Disambiguates a quick tap (fires [onTap]) from a horizontal swipe (fires [onDrag] as the finger
  * moves, then [onDragEnd] on release) for a single pointer, so the two can share one full-screen
  * gesture surface without a real drag also completing as a tap. Movement in any direction past
- * touch slop counts as "dragging" (cancelling the tap, matching plain tap-gesture semantics), but
- * only the horizontal component is reported to [onDrag].
+ * [TAP_DRAG_SLOP_DP] counts as "dragging" (cancelling the tap, matching plain tap-gesture
+ * semantics), but only the horizontal component is reported to [onDrag]. Deliberately more
+ * forgiving than the system's own (much smaller) touch slop: a wide contact patch - the side of a
+ * thumb rather than a fingertip - reports more apparent pointer movement during an otherwise-still
+ * press than the system default tolerates, which was enough to misclassify a real tap as a drag
+ * and swallow the capture. [SWIPE_THRESHOLD_DP] still gates the swipe *actions* below, so widening
+ * this doesn't make an accidental swipe easier to trigger, only a real tap harder to miss.
  *
  * Every touch interaction is also classified and reported through [onGestureEvent] for diagnostics
  * (see "Gesture Processing"/"Gesture Events" in app-spec.md); [onDragEnd] receives the drag's raw
@@ -375,6 +380,7 @@ private suspend fun PointerInputScope.detectTapOrHorizontalSwipe(
     onGestureEvent: (GestureDiagnosticEvent) -> Unit,
 ) {
     val swipeThresholdPx = with(this) { SWIPE_THRESHOLD_DP.dp.toPx() }
+    val tapDragSlopPx = with(this) { TAP_DRAG_SLOP_DP.dp.toPx() }.coerceAtLeast(viewConfiguration.touchSlop)
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false)
         val downTimeMillis = System.currentTimeMillis()
@@ -421,7 +427,7 @@ private suspend fun PointerInputScope.detectTapOrHorizontalSwipe(
                         totalDeltaX = totalDeltaX,
                         totalDeltaY = totalDeltaY,
                         totalDistance = sqrt(totalDeltaX * totalDeltaX + totalDeltaY * totalDeltaY),
-                        touchSlopPx = viewConfiguration.touchSlop,
+                        touchSlopPx = tapDragSlopPx,
                         swipeThresholdPx = swipeThresholdPx,
                         classification = classification,
                     ),
@@ -435,7 +441,7 @@ private suspend fun PointerInputScope.detectTapOrHorizontalSwipe(
             totalDeltaY += delta.y
             if (!isDragging) {
                 val totalDistance = sqrt(totalDeltaX * totalDeltaX + totalDeltaY * totalDeltaY)
-                if (totalDistance > viewConfiguration.touchSlop) isDragging = true
+                if (totalDistance > tapDragSlopPx) isDragging = true
             }
             if (isDragging) {
                 change.consume()
@@ -455,6 +461,16 @@ private const val GESTURE_SURFACE_COMPONENT_NAME = "CameraScreen.fullScreenGestu
  * drift doesn't misfire as a cycle request) - see "Overlay gestures" in app-spec.md.
  */
 private const val SWIPE_THRESHOLD_DP = 64
+
+/**
+ * How far a touch may move (in any direction, from its initial down position) and still count as a
+ * tap rather than a drag - see [detectTapOrHorizontalSwipe]'s kdoc. Deliberately larger than the
+ * system's own [androidx.compose.ui.platform.ViewConfiguration.touchSlop] (which this value floors
+ * at, in case a device's own default happens to already exceed it) to tolerate the extra apparent
+ * pointer movement a wide contact patch - e.g. tapping with the side of a thumb - reports during an
+ * otherwise-still press.
+ */
+private const val TAP_DRAG_SLOP_DP = 24
 
 private const val OVERLAY_ANIMATION_DURATION_MILLIS = 200
 

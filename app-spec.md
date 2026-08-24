@@ -896,6 +896,7 @@ Write Compose tests verifying:
 * Permission-denied content is displayed correctly
 * Camera UI appears when permission is granted
 * Touching the preview dispatches a screen-touch capture trigger
+* A touch with some incidental pointer drift, below the app's own (deliberately widened) touch-slop threshold, still registers as a tap rather than being cancelled as a drag
 * Pressing the visible shutter control dispatches a capture trigger
 * Capture-in-progress state is represented
 * A capture or file-saving error does not display any error text or detail on the main camera screen (see "Error Handling")
@@ -1023,6 +1024,11 @@ The diagnostics shall make it possible to determine why a capture did or did not
 Detailed gesture diagnostics and visual debug overlays shall be disabled in Release builds. Normal operational and error logging may remain enabled.
 
 ### Gesture Processing
+
+The touch-slop threshold used to distinguish a tap from a drag shall be deliberately larger than
+the platform's own default, to tolerate the extra apparent pointer movement a wide or irregular
+contact patch (for example, tapping with the side of a thumb rather than a fingertip) can report
+during an otherwise-still press, without weakening swipe-vs-tap detection for an ordinary touch.
 
 For every touch interaction, debug logging shall record:
 

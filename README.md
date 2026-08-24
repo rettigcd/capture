@@ -284,14 +284,15 @@ This is implemented in `GrantedCameraContent` in `CameraScreen.kt` as a single c
 gesture detector (`detectTapOrHorizontalSwipe`, built on `awaitEachGesture`) attached to the
 always-full-screen preview layer underneath the cover photo. One detector - rather than Compose's
 built-in `detectTapGestures` and `detectDragGestures` layered separately - disambiguates a tap
-(capture) from a horizontal drag (swipe) for the same touch: movement past touch slop in *any*
-direction is treated as a drag (cancelling the tap, matching plain tap-gesture semantics), while
-only the horizontal component drives an `Animatable<Float>` offset that positions the cover photo
-via `Modifier.offset { IntOffset(...) }`. `detectTapOrHorizontalSwipe`'s `onDragEnd` callback also
-reports which direction the drag ended in (`draggedLeft: Boolean`, from the sign of the
-gesture's total horizontal delta); `GrantedCameraContent` uses that, together with
-`uiState.overlayVisible` and `uiState.coverPhotoCount`, to tell "reveal the overlay" apart from
-"cycle within it" - the offset itself stays pinned at 0 for the whole gesture in the cycling case
+(capture) from a horizontal drag (swipe) for the same touch: movement past `TAP_DRAG_SLOP_DP`
+(24dp, deliberately more forgiving than the system's own touch slop - see "Fat-thumb tap
+tolerance" below) in *any* direction is treated as a drag (cancelling the tap, matching plain
+tap-gesture semantics), while only the horizontal component drives an `Animatable<Float>` offset
+that positions the cover photo via `Modifier.offset { IntOffset(...) }`.
+`detectTapOrHorizontalSwipe`'s `onDragEnd` callback reports the drag's raw total horizontal delta
+(`Float`, not a pre-computed direction); `GrantedCameraContent` derives the direction from its sign
+and uses that, together with `uiState.overlayVisible` and `uiState.coverPhotoCount`, to tell
+"reveal the overlay" apart from "cycle within it" - the offset itself stays pinned at 0 for the whole gesture in the cycling case
 (it was already fully shown), so there's nothing extra to animate. The cover photo itself never
 installs its own pointer input, so touches over it fall through to the same detector underneath
 regardless of where the slide currently sits.
@@ -1678,3 +1679,27 @@ value change), and `assembleDebug` all passed, and the rebuilt APK was installed
 device with `mCurrentFocus` confirming `MainActivity` and no `FATAL EXCEPTION`/`AndroidRuntime`
 crash in logcat. Whether 64dp feels right for the gesture itself still needs hands-on device
 verification.
+
+Fixed a reported bug where tapping with the side of a thumb (a wide, irregular contact patch)
+sometimes didn't register as a tap at all. `detectTapOrHorizontalSwipe`'s tap-vs-drag disambiguation
+used the platform's own touch slop (`viewConfiguration.touchSlop`, roughly 8-18dp depending on
+source) as the movement threshold past which a touch is treated as a drag rather than a tap - a wide
+contact patch can report more apparent pointer movement than a fingertip during an otherwise-still
+press, tripping that small threshold and silently swallowing the tap as a cancelled drag (with no
+`onTap`/capture and no visible error, since a below-swipe-threshold drag on the main preview simply
+does nothing). Fixed by introducing a dedicated `TAP_DRAG_SLOP_DP = 24` constant, floored at the
+platform's own touch slop via `.coerceAtLeast(viewConfiguration.touchSlop)` for safety on any device
+where that's already larger, and using it in place of the raw system value both for the `isDragging`
+decision and the `touchSlopPx` value reported in gesture diagnostics (so the diagnostic log reflects
+the threshold actually applied). `SWIPE_THRESHOLD_DP` (64dp) still gates every swipe action
+downstream, so widening the tap tolerance doesn't make an accidental swipe any easier to trigger -
+only a real tap harder to miss. Added `tappingWithAWideContactPatch_stillRegistersAsATapDespiteSomeApparentDrift`
+to `CameraScreenTest`, using `composeTestRule.density` to simulate a synthetic 20dp drift during an
+otherwise-stationary press (comfortably past typical platform touch-slop values but under the new
+24dp threshold) and asserting the tap still fires. Also caught and fixed a stale doc paragraph in
+this README's "Cover photo visibility" section that still described `onDragEnd` as reporting a
+pre-computed `draggedLeft: Boolean`, left over from the swipe-threshold fix earlier in this log.
+`app-spec.md`'s "Gesture Processing" section and Compose-test checklist were updated to document the
+widened tolerance. `testDebugUnitTest` (229/229 tests, 1 new; the same pre-existing
+`KencPhotoEncryptorTest` flake noted above did not reproduce this run), `lintDebug` (0 issues), and
+`assembleDebug` all passed. Device verification of the fix itself has not been performed.

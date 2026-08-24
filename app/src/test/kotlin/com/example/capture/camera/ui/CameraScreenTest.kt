@@ -17,6 +17,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
+import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import com.example.capture.R
 import com.example.capture.camera.domain.CaptureAspectRatio
@@ -118,6 +119,31 @@ class CameraScreenTest {
         composeTestRule.onNodeWithContentDescription(
             context.getString(R.string.camera_preview_content_description),
         ).performTouchInput { click() }
+
+        assertThat(touchCount).isEqualTo(1)
+    }
+
+    @Test
+    fun tappingWithAWideContactPatch_stillRegistersAsATapDespiteSomeApparentDrift() {
+        // A fingertip tap barely moves; the side of a thumb (a wide, irregular contact patch) can
+        // report noticeably more apparent pointer movement during an otherwise-still press. 20dp is
+        // comfortably past both the system's own touch slop and Compose's default touch slop, but
+        // still under this screen's own more forgiving TAP_DRAG_SLOP_DP (24dp) - so this exercises
+        // exactly the gap the widened slop exists to cover.
+        var touchCount = 0
+        setScreen(
+            CameraUiState(cameraPermission = PermissionStatus.GRANTED),
+            onScreenTouch = { touchCount++ },
+        )
+        val driftPx = with(composeTestRule.density) { 20.dp.toPx() }
+
+        composeTestRule.onNodeWithContentDescription(
+            context.getString(R.string.camera_preview_content_description),
+        ).performTouchInput {
+            down(center)
+            moveTo(Offset(centerX + driftPx, centerY))
+            up()
+        }
 
         assertThat(touchCount).isEqualTo(1)
     }
