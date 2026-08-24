@@ -21,8 +21,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Camera
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -36,7 +34,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -140,24 +137,7 @@ fun CameraScreen(
                 .padding(8.dp)
                 .semantics { contentDescription = settingsDescription },
         ) {
-            Icon(Icons.Filled.Settings, contentDescription = null, tint = Color.White)
-        }
-
-        // Positioned between the debug diagnostics icon (top-start, debug builds only) and the
-        // settings gear icon (top-end) - see "UI requirements" in app-spec.md - rather than
-        // stacked underneath the gear icon. Only shown once camera permission is granted, matching
-        // this control's old position nested inside GrantedCameraContent.
-        if (uiState.cameraPermission == PermissionStatus.GRANTED) {
-            VoiceTriggerControl(
-                enabled = uiState.voiceTriggerEnabled,
-                listening = uiState.voiceListening,
-                errorMessage = uiState.voiceError,
-                onToggle = onVoiceTriggerToggle,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .statusBarsPadding()
-                    .padding(top = 8.dp),
-            )
+            Icon(Icons.Filled.Settings, contentDescription = null, tint = Color.White.copy(alpha = 0.75f))
         }
 
         // Debug-only: never shown in a Release build (see "Debug Overlay" in app-spec.md), even
@@ -173,7 +153,7 @@ fun CameraScreen(
                     .padding(8.dp)
                     .semantics { contentDescription = diagnosticsToggleDescription },
             ) {
-                Icon(Icons.Filled.BugReport, contentDescription = null, tint = Color.White)
+                Icon(Icons.Filled.BugReport, contentDescription = null, tint = Color.White.copy(alpha = 0.75f))
             }
         }
     }
@@ -565,51 +545,6 @@ private fun CaptureProgressIndicator(progress: CaptureProgressUi, modifier: Modi
                 )
                 CaptureProgressUi.Hidden -> Unit
             }
-        }
-    }
-}
-
-@Composable
-private fun VoiceTriggerControl(
-    enabled: Boolean,
-    listening: Boolean,
-    errorMessage: String?,
-    onToggle: (Boolean) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = modifier) {
-        Card {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-            ) {
-                val listeningDescription = if (listening) {
-                    stringResource(R.string.voice_listening_indicator)
-                } else {
-                    stringResource(R.string.voice_not_listening_indicator)
-                }
-                Icon(
-                    imageVector = if (listening) Icons.Filled.Mic else Icons.Filled.MicOff,
-                    contentDescription = listeningDescription,
-                )
-                val toggleDescription = stringResource(R.string.voice_toggle_content_description)
-                Switch(
-                    checked = enabled,
-                    onCheckedChange = onToggle,
-                    modifier = Modifier.semantics {
-                        contentDescription = toggleDescription
-                    },
-                )
-            }
-        }
-        if (errorMessage != null) {
-            Text(
-                text = errorMessage,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier
-                    .padding(top = 4.dp)
-                    .semantics { liveRegion = LiveRegionMode.Assertive },
-            )
         }
     }
 }

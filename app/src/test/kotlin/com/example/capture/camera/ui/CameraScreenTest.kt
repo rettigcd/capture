@@ -130,11 +130,11 @@ class CameraScreenTest {
             onScreenTouch = { isTopHalf = it },
         )
 
-        // Well below 10% of screen height: the debug icon, voice-trigger control, and settings
-        // gear icon are all now spread across the very top of the screen (see "UI requirements" in
-        // app-spec.md) and, unlike the gesture surface underneath them, actively consume their own
-        // clicks - no single X offset clears all three, so this drops down to 35% instead (still
-        // comfortably the top half, and clear of that whole row regardless of its exact width).
+        // Well below 10% of screen height: the debug icon and settings gear icon are both spread
+        // across the very top of the screen (see "UI requirements" in app-spec.md) and, unlike the
+        // gesture surface underneath them, actively consume their own clicks - no single X offset
+        // clears both, so this drops down to 35% instead (still comfortably the top half, and clear
+        // of that whole row regardless of its exact width).
         composeTestRule.onNodeWithContentDescription(
             context.getString(R.string.camera_preview_content_description),
         ).performTouchInput { click(position = Offset(width / 2f, height * 0.35f)) }
@@ -176,14 +176,16 @@ class CameraScreenTest {
     }
 
     @Test
-    fun voiceListeningIndicator_reflectsWhetherTheRecognizerIsActive() {
+    fun voiceListeningIndicator_isHidden_evenWhileTheRecognizerIsActive() {
         setScreen(
             CameraUiState(cameraPermission = PermissionStatus.GRANTED, voiceListening = true),
         )
 
-        composeTestRule.onNodeWithContentDescription(
-            context.getString(R.string.voice_listening_indicator),
-        ).assertIsDisplayed()
+        assertThat(
+            composeTestRule.onAllNodesWithContentDescription(
+                context.getString(R.string.voice_listening_indicator),
+            ).fetchSemanticsNodes(atLeastOneRootRequired = false),
+        ).isEmpty()
     }
 
     @Test

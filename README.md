@@ -234,7 +234,7 @@ the Gradle Versions plugin) to check for newer releases - these ecosystems move 
 | Permission | When requested | Why |
 |---|---|---|
 | `android.permission.CAMERA` | Immediately on first launch | Needed to show the preview at all; the app is unusable without it. |
-| `android.permission.RECORD_AUDIO` | Only when the user turns the voice-trigger switch on | Never requested up front - voice triggering is opt-in, so the microphone is never touched until the user asks for it. |
+| `android.permission.RECORD_AUDIO` | Only when the user turns the voice-trigger switch on | Never requested up front - voice triggering is opt-in, so the microphone is never touched until the user asks for it. The switch itself is currently hidden from the camera screen (see "Build verification" below), so in practice this permission is never requested at all right now. |
 | `android.permission.VIBRATE` | Install time (normal permission, no runtime prompt) | Powers the short capture-success pulse described below. |
 
 No storage permission is requested (see "Why minSdk 29" above).
@@ -826,21 +826,12 @@ since none of it is fully covered by automated tests:
 - [ ] **Touch capture:** tapping anywhere on the live preview takes a photo; tapping the visible
       shutter button also takes a photo; tapping rapidly does not produce duplicate photos.
 - [ ] **Haptic feedback (Single-Shot):** a short vibration pulse is felt immediately when a photo
-      saves successfully, for all three triggers (touch, volume button, voice); no pulse occurs on
+      saves successfully, for both triggers (touch, volume button); no pulse occurs on
       a failed capture; toggling the device's system-wide haptics/vibration setting off suppresses
       it (this app does not override that system setting).
 - [ ] **Volume buttons:** pressing volume up takes a photo; pressing volume down takes a photo;
       the system's on-screen media volume indicator does **not** appear while doing so; pressing
       a volume button does not change the device's media volume.
-- [ ] **Voice capture:** turning the voice switch on requests microphone permission (only the
-      first time); saying "photo"/"picture"/"capture"/"cheese" takes a photo; the listening
-      indicator is visibly on while listening and off when the switch is off; turning voice
-      capture off actually stops the microphone (check the OS's microphone-in-use indicator).
-- [ ] **Voice capture with microphone permission pre-granted:** grant `RECORD_AUDIO` ahead of time
-      via system Settings (Settings > Apps > Capture > Permissions), then, without ever seeing the
-      in-app runtime prompt, turn the voice switch on and confirm the listening indicator still
-      turns on (regression check for a bug where the app never learned the permission was already
-      granted and the recognizer silently never started - see `CameraRoute.onVoiceTriggerToggle`).
 - [ ] **Portrait lock:** physically rotate the device through all four orientations while the
       preview is showing; the app's own layout stays locked to portrait the entire time (it never
       visually rotates into landscape, even briefly), with no black flash, freeze, or crash; take a
@@ -849,8 +840,7 @@ since none of it is fully covered by automated tests:
       `OrientationEventListener`-based rotation tracking described above, not a UI rotation.
 - [ ] **Permissions:** deny camera permission and confirm a real message (not a blank screen)
       appears; deny it a second time ("don't ask again") and confirm the screen offers to open
-      Settings; grant it from Settings and return to the app; repeat for microphone permission via
-      the voice toggle.
+      Settings; grant it from Settings and return to the app.
 - [ ] **Image storage:** after taking a photo, open the device's Gallery/Photos app and confirm it
       appears in an album named "Capture" with a timestamp-based filename, and that it opens and
       displays correctly (not a broken/zero-byte file).
@@ -858,13 +848,13 @@ since none of it is fully covered by automated tests:
       the app does not crash and (on returning) the capture either completed or failed cleanly.
 - [ ] **Settings navigation:** the gear icon is reachable from the camera screen regardless of
       permission state; it opens the settings screen; the system/gesture back action returns to
-      the camera screen with its state (voice toggle) intact.
+      the camera screen.
 - [ ] **Vibration duration setting:** moving the slider changes the felt pulse length on the next
       capture; the value survives an app restart.
 - [ ] **Overlay swipe gestures:** with a cover photo configured, a left swipe on the live preview
       slides it in from the right edge and settles over the preview; the shutter button and the
-      compact zoom/aspect-ratio controls both disappear (the voice control, gear icon, and capture
-      progress indicator stay visible); capture (touch/volume/voice) still works and still saves a
+      compact zoom/aspect-ratio controls both disappear (the gear icon and capture progress
+      indicator stay visible); capture (touch/volume) still works and still saves a
       real photo while it's shown, even with the shutter button hidden; a right swipe on it slides
       it back off to the right, restoring the live preview and bringing the shutter button and
       compact controls back; the slide visibly follows the finger while dragging rather than only
@@ -874,9 +864,6 @@ since none of it is fully covered by automated tests:
       4:3 and 16:9 and confirm the preview box's proportions change (briefly stopping, per the
       rebind); both selections survive an app restart; both controls sit just above the shutter
       button without overlapping it on a range of screen sizes.
-- [ ] **Voice control position:** confirm the voice-listening indicator/toggle now sits at the top
-      center of the screen, clearly between the debug bug icon (debug builds only, top-left) and
-      the settings gear icon (top-right), not stacked underneath the gear icon.
 - [ ] **Cover-photo cycling:** with three cover photos configured, repeatedly left-swipe while
       Overlay View is already shown and confirm it advances through all three in order and wraps
       back to the first after the third, without ever hiding the overlay or dispatching a capture;
@@ -895,8 +882,8 @@ since none of it is fully covered by automated tests:
       screen advances it to whichever photo now occupies that slot instead of leaving a stale image.
 - [ ] **Volume keys on the settings screen:** while settings is open, volume buttons adjust the
       device's normal media volume instead of taking a photo.
-- [ ] **Burst Mode capture:** switch to Burst Mode in settings, trigger a capture (touch, volume,
-      or voice) and confirm four photos are saved in quick succession, spaced roughly by the
+- [ ] **Burst Mode capture:** switch to Burst Mode in settings, trigger a capture (touch or volume)
+      and confirm four photos are saved in quick succession, spaced roughly by the
       configured burst interval; only a single vibration pulse is felt for the whole burst, not
       one per photo; a second capture command sent while the burst is still running does not start
       an overlapping burst.
@@ -904,9 +891,9 @@ since none of it is fully covered by automated tests:
       next burst; the value survives an app restart.
 - [ ] **Per-trigger capture mode independence:** in Settings, set only Volume Up to Burst Mode
       (leave every other trigger at Single-Shot); confirm Volume Up produces four photos while
-      tapping the screen, pressing Volume Down, using the shutter button, and voice command each
-      still produce exactly one; repeat with a different single trigger set to Burst to confirm it
-      isn't specific to Volume Up.
+      tapping the screen, pressing Volume Down, and using the shutter button each still produce
+      exactly one; repeat with a different single trigger set to Burst to confirm it isn't specific
+      to Volume Up.
 - [ ] **Screen top/bottom split:** with the screen's top-half trigger set to Single-Shot and the
       bottom-half trigger set to Burst (or vice versa), tapping the top half of the screen and
       tapping the bottom half produce the correct number of photos for each; the split holds
@@ -1604,3 +1591,26 @@ unit coverage of its own. `testDebugUnitTest` (224/224 tests), `lintDebug` (0 is
 `assembleDebug` all passed unchanged. This still needs the same real-device smoke test called out
 above, now also checking that a decrypted `.kenc`'s metadata carries the expected `photoDate`/`tags`
 shape.
+
+The voice-trigger toggle (the `Mic`/`MicOff` `Card` + `Switch` in the top-center of the camera
+screen) was then hidden on request. `VoiceTriggerControl` and its call site in `CameraScreen`
+were deleted outright rather than left dead-but-rendered, along with the now-unused `Mic`/`MicOff`/
+`Switch` imports; `CameraUiState.voiceTriggerEnabled`/`voiceListening`/`voiceError`,
+`CameraViewModel`'s voice wiring, and the whole `voice` package are untouched, so the feature still
+exists underneath - it's just unreachable from this screen for now. `CameraScreenTest`'s
+`voiceListeningIndicator_reflectsWhetherTheRecognizerIsActive` was replaced with
+`voiceListeningIndicator_isHidden_evenWhileTheRecognizerIsActive`, asserting the indicator's content
+description is now absent even when `voiceListening = true`; a stale comment on the top-half-tap
+test (which used to explain dodging three top-row controls) was trimmed to two. Manual-checklist
+items that assumed a visible voice switch (voice capture, the pre-granted-permission regression
+check, and mentions of the voice trigger inside the permissions/settings-navigation/overlay-swipe/
+burst/per-trigger-independence items) were removed or trimmed accordingly. `testDebugUnitTest`
+(224/224 tests - net unchanged, one removed and one added), `lintDebug` (0 issues), and
+`assembleDebug` all passed.
+
+The settings gear icon and the debug-only bug-report icon were then made 25% transparent, each via
+`tint = Color.White.copy(alpha = 0.75f)` in `CameraScreen.kt` in place of the plain `Color.White`
+used everywhere else (shutter button, capture progress, etc., which stay fully opaque). No test or
+spec changes were needed - this is a pure visual tweak with no new behavior to assert.
+`testDebugUnitTest` (224/224 tests, unchanged), `lintDebug` (0 issues), and `assembleDebug` all
+passed.

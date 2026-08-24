@@ -207,9 +207,9 @@ The initial camera screen should include:
 
 * A camera preview centered within the camera screen and constrained to the selected capture aspect ratio, letterboxed or pillarboxed as needed rather than stretched to fill the screen (see "Capture Aspect Ratio and Preview Framing")
 * Capture progress indicator - spinner for Single-Shot Mode, four-step progress for Burst Mode - shown above Overlay View rather than hidden by it (see "Capture Progress Indicator"). No textual capture status ("Capturing…" / "Photo saved" or similar) is shown anywhere on screen.
-* Voice-listening indicator and voice-trigger enable/disable control, positioned along the top of the
-  screen between the debug diagnostics toggle (top-left, debug builds only - see "Debug Overlay") and
-  the settings gear icon (top-right)
+* No voice-listening indicator or voice-trigger enable/disable control on the camera screen - the
+  control is hidden (voice triggering remains implemented underneath but is not currently reachable
+  from the UI)
 * Permission and permission-related error messages (capture and file-saving errors are not shown on this screen - see "Error Handling")
 * Optional visible shutter button for accessibility, even though touching the preview also captures (also hidden while Overlay View is shown)
 * Compact camera zoom and capture aspect ratio controls at the bottom of the screen (see "Camera
