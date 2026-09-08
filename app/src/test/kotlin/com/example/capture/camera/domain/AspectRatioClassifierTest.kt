@@ -57,4 +57,12 @@ class AspectRatioClassifierTest {
         assertThat(CaptureAspectRatio.RATIO_16_9.previewRatio(isPortrait = false)).isEqualTo(16f / 9f)
         assertThat(CaptureAspectRatio.RATIO_16_9.previewRatio(isPortrait = true)).isEqualTo(9f / 16f)
     }
+
+    @Test
+    fun `previewWidthRatio and previewHeightRatio swap the landscape components in portrait`() {
+        assertThat(CaptureAspectRatio.RATIO_4_3.previewWidthRatio(isPortrait = false)).isEqualTo(4)
+        assertThat(CaptureAspectRatio.RATIO_4_3.previewHeightRatio(isPortrait = false)).isEqualTo(3)
+        assertThat(CaptureAspectRatio.RATIO_4_3.previewWidthRatio(isPortrait = true)).isEqualTo(3)
+        assertThat(CaptureAspectRatio.RATIO_4_3.previewHeightRatio(isPortrait = true)).isEqualTo(4)
+    }
 }

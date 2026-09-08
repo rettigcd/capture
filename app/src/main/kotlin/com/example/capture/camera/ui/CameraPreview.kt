@@ -1,5 +1,6 @@
 package com.example.capture.camera.ui
 
+import android.content.res.Configuration
 import android.util.Rational
 import android.util.Size
 import android.view.OrientationEventListener
@@ -30,12 +31,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.capture.camera.domain.CameraDiagnosticsSnapshot
 import com.example.capture.camera.domain.CaptureAspectRatio
 import com.example.capture.camera.domain.CaptureMode
+import com.example.capture.camera.domain.previewHeightRatio
+import com.example.capture.camera.domain.previewWidthRatio
 
 /**
  * The only file in the app that touches CameraX's `Preview`/`ImageCapture` use cases directly.
@@ -72,6 +76,7 @@ fun CameraPreview(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val isPortrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
 
     var surfaceRequest by remember { mutableStateOf<SurfaceRequest?>(null) }
 
@@ -122,11 +127,17 @@ fun CameraPreview(
             .build()
     }
 
-    // Bound alongside Preview/ImageCapture regardless of captureMode/captureAspectRatio (unlike
-    // imageCaptureUseCase above): Video Mode doesn't need Burst Mode's reduced-resolution/
-    // low-latency treatment, so there's no per-mode configuration that would require rebuilding
-    // this use case - it's built once and just re-added to whichever UseCaseGroup gets bound
-    // next (see "Video Mode" in app-spec.md).
+    // Built once (unlike imageCaptureUseCase above, which is rebuilt per captureMode/
+    // captureAspectRatio) since Video Mode doesn't need Burst Mode's reduced-resolution/
+    // low-latency treatment or a captureAspectRatio-driven resolution selector - there's no
+    // per-mode configuration that would require rebuilding it (see "Video Mode" in app-spec.md).
+    // It's added to the UseCaseGroup below only in Video Mode, not "regardless of captureMode" as
+    // a `remember { ... }`-scoped use case might suggest at a glance: a shared ViewPort forces
+    // every use case bound alongside it to the same field of view, computed from the *most
+    // constrained* one - this use case's fixed 16:9 Quality.FHD recorder only fits within 75% of
+    // a 4:3 sensor's width and height, so binding it unconditionally silently shrank Preview's and
+    // ImageCapture's effective FOV by the same 25%/25% even in Single-Shot/Burst Mode, which don't
+    // use it at all.
     val videoCaptureUseCase = remember {
         val recorder = Recorder.Builder()
             .setQualitySelector(QualitySelector.from(Quality.FHD, FallbackStrategy.higherQualityOrLowerThan(Quality.FHD)))
@@ -134,7 +145,7 @@ fun CameraPreview(
         VideoCapture.withOutput(recorder)
     }
 
-    LaunchedEffect(lifecycleOwner, captureMode, captureAspectRatio) {
+    LaunchedEffect(lifecycleOwner, captureMode, captureAspectRatio, isPortrait) {
         val cameraProvider = ProcessCameraProvider.awaitInstance(context)
         cameraProvider.unbindAll()
         val rotation = ContextCompat.getDisplayOrDefault(context).rotation
@@ -144,19 +155,33 @@ fun CameraPreview(
         // (see "Use a shared CameraX viewport and use-case group..." in app-spec.md), built from
         // the selected ratio itself - already known exactly as a fraction - rather than derived
         // from measured pixel dimensions, which would just reconstruct the same ratio imprecisely.
+        // CameraX's ViewPort.Builder docs specify the aspect ratio as "the dimension of the View"
+        // (i.e. the on-screen preview container), not the sensor's landscape-oriented ratio - using
+        // captureAspectRatio's raw (always-landscape) widthRatio/heightRatio here, unrotated for
+        // portrait, previously made CameraX compute a preview crop tighter than the actual capture
+        // crop, since the on-screen preview Box is laid out at the rotated (portrait) ratio (see
+        // previewWidthRatio/previewHeightRatio, which the Box in CameraScreen.kt is also built
+        // from).
         val viewPort = ViewPort.Builder(
-            Rational(captureAspectRatio.widthRatio, captureAspectRatio.heightRatio),
+            Rational(
+                captureAspectRatio.previewWidthRatio(isPortrait),
+                captureAspectRatio.previewHeightRatio(isPortrait),
+            ),
             rotation,
         ).build()
+        val videoModeActive = captureMode == CaptureMode.VIDEO
         val useCaseGroup = UseCaseGroup.Builder()
             .setViewPort(viewPort)
             .addUseCase(previewUseCase)
             .addUseCase(imageCaptureUseCase)
-            .addUseCase(videoCaptureUseCase)
+            .apply { if (videoModeActive) addUseCase(videoCaptureUseCase) }
             .build()
         val camera = cameraProvider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, useCaseGroup)
         onImageCaptureReady(imageCaptureUseCase)
-        onVideoCaptureReady(videoCaptureUseCase)
+        // null outside Video Mode: videoCaptureUseCase isn't in the bound UseCaseGroup above then,
+        // so reporting it "ready" would let CameraXVideoCaptureController try to record through a
+        // use case CameraX never actually bound.
+        onVideoCaptureReady(if (videoModeActive) videoCaptureUseCase else null)
         onCameraReady(camera)
         onCameraDiagnostics(
             cameraDiagnosticsSnapshot(previewUseCase, imageCaptureUseCase, captureAspectRatio, rotation, rotation, captureMode),

@@ -1703,3 +1703,54 @@ pre-computed `draggedLeft: Boolean`, left over from the swipe-threshold fix earl
 widened tolerance. `testDebugUnitTest` (229/229 tests, 1 new; the same pre-existing
 `KencPhotoEncryptorTest` flake noted above did not reproduce this run), `lintDebug` (0 issues), and
 `assembleDebug` all passed. Device verification of the fix itself has not been performed.
+
+Fixed a reported bug where the live preview showed a noticeably tighter crop than the actual
+captured photo at 1x zoom - the framing you composed the shot with didn't match what got saved.
+Root cause: `CameraPreview.kt`'s shared `ViewPort` (see "Use a shared CameraX viewport..." in
+app-spec.md) was built from `captureAspectRatio.widthRatio`/`heightRatio` as-is, which
+`CaptureAspectRatio.kt` documents as always expressed in landscape orientation (e.g. 4:3 is
+literally `4, 3`). CameraX's own `ViewPort.Builder` docs specify that its `aspectRatio` parameter
+must instead match "the dimension of the View" - i.e. the actual on-screen preview container, which
+in this always-portrait-locked app is the *rotated* ratio (3:4 for a 4:3 selection), the same one
+`CameraScreen.kt`'s preview `Box` is already sized to via `previewRatio()`. Passing the un-rotated
+ratio to `ViewPort.Builder` made CameraX compute a preview crop rect tighter than the crop rect it
+gave the `ImageCapture` output, since the two use cases' outputs get fitted to that declared aspect
+ratio independently, only the captured photo isn't constrained by a Compose `Box` in the same way.
+Fixed by adding `previewWidthRatio`/`previewHeightRatio` to `CaptureAspectRatio.kt` (`previewRatio`
+now derives from them instead of duplicating the same landscape/portrait swap), and building the
+`ViewPort`'s `Rational` in `CameraPreview.kt` from those instead of the raw landscape ratio.
+Added `previewWidthRatio and previewHeightRatio swap the landscape components in portrait` to
+`AspectRatioClassifierTest`. `testDebugUnitTest` (230/230 tests, 1 new; no flakes this run),
+`lintDebug` (0 issues), and `assembleDebug` all passed. Device verification of the fix itself (that
+the preview and a captured photo now frame the same content at 1x zoom) has not been performed.
+
+The rotation fix above turned out to only be part of the story: after deploying it, on-device
+testing found the captured photo still included a border 20-25% of the frame's width/height beyond
+what the preview showed. Root-caused by adding temporary `Log.i` calls to dump each bound use
+case's `resolutionInfo.cropRect` (removed again once the cause was confirmed): with `captureMode`
+Single-Shot, the *preview*'s cropRect was `(180,135)-(1260,945)` out of a `1440x1080` buffer, and
+the *capture*'s was `(510,383)-(3570,2678)` out of `4080x3060` - both exactly a centered 75%-width
+x 75%-height crop of their own buffer, i.e. consistent with each other but both needlessly tighter
+than necessary. Cause: `videoCaptureUseCase` (the `VideoCapture<Recorder>` for Video Mode, fixed at
+16:9 `Quality.FHD`) was unconditionally bound into the same `UseCaseGroup`/`ViewPort` as
+`previewUseCase`/`imageCaptureUseCase` even in Single-Shot/Burst Mode, per the "built once and just
+re-added to whichever `UseCaseGroup` gets bound next" comment on it. A shared `ViewPort` forces
+every bound use case to the same field of view, sized to the *most constrained* one - fitting a
+16:9 crop out of a 4:3 sensor only uses 75% of the sensor's width (or, depending on orientation,
+height), so `videoCaptureUseCase`'s mere presence silently shrank Preview's and ImageCapture's FOV
+by that same 25%/25% regardless of the selected `captureAspectRatio`, confirmed by re-running the
+same temporary logging with `videoCaptureUseCase` excluded: both cropRects became full-buffer
+(`(0,0)-(1440,1080)` and `(0,0)-(4080,3060)`), i.e. no cropping at all, since both buffers already
+natively matched the requested 4:3 ratio. Fixed by only adding `videoCaptureUseCase` to the
+`UseCaseGroup` when `captureMode == CaptureMode.VIDEO` (mode switches already force a full
+unbind/rebind via the enclosing `LaunchedEffect`'s existing `captureMode` key, so this doesn't add
+any new rebind). `onVideoCaptureReady` is now called with `null` outside Video Mode too, instead of
+handing `CameraViewModel`/`VideoCaptureUseCaseHolder` a `videoCaptureUseCase` reference that isn't
+actually bound to the camera session that cycle - previously harmless only because nothing could
+reach `CameraXVideoCaptureController.record()` outside Video Mode's own UI. `testDebugUnitTest`
+(230/230, no new tests - this is a binding-time behavior change with no new branch a plain/
+Robolectric unit test can exercise), `lintDebug` (0 issues), and `assembleDebug` all passed.
+Verified on-device via the same temporary crop-rect logging described above (Single-Shot Mode with
+`videoCaptureUseCase` excluded produced full-buffer, uncropped `resolutionInfo.cropRect` values for
+both preview and capture); whether the two now visually match at 1x zoom still needs the reporter's
+own eyes.
